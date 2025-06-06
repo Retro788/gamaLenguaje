@@ -1,0 +1,69 @@
+<programa>        ::= <lista_sentencias> EOF
+
+<lista_sentencias> ::= <sentencia> <lista_sentencias>
+                     | ε
+
+<sentencia>       ::= <declaracion>
+                     | <imprimir>
+                     | <leer>
+                     | <asignacion>
+                     | <si>
+                     | <mientras>
+                     | <bloque>
+
+<declaracion>     ::= <tipo> <lista_variables> ';'
+<tipo>            ::= 'Entero' | 'Caracter' | 'Flotante'
+<lista_variables> ::= <decl_var> ( ',' <decl_var> )*
+<decl_var>        ::= IDENT [ '=' <expresion> ]
+
+<imprimir>        ::= 'Imprimir' '(' <expresion> ')' ';'
+<leer>            ::= 'Leer' '(' IDENT ')' ';'
+
+<asignacion>      ::= IDENT '=' <expresion> ';'
+
+<si>              ::= 'Si' '(' <expresion> ')' <sentencia> [ 'Sino' <sentencia> ]
+<mientras>        ::= 'Mientras' '(' <expresion> ')' <sentencia>
+
+<bloque>          ::= '{' <lista_sentencias> '}'
+
+<expresion>       ::= <exp_relacional>
+
+<exp_relacional>  ::= <exp_suma> ( ( '==' | '!=' | '<' | '>' | '<=' | '>=' ) <exp_suma> )*
+<exp_suma>        ::= <exp_mul> ( ( '+' | '-' ) <exp_mul> )*
+<exp_mul>         ::= <exp_unaria> ( ( '*' | '/' ) <exp_unaria> )*
+<exp_unaria>      ::= [ '-' ] <primaria>
+<primaria>        ::= '(' <expresion> ')' 
+                     | NUM 
+                     | IDENT
+
+// Tokens léxicos (definiciones de “átomos”):
+IDENT            ::= (Letra) (Letra | Dígito)*
+NUM              ::= (Dígito)+
+
+// Palabras reservadas:
+'Entero', 'Caracter', 'Flotante', 'Imprimir', 'Leer', 'Si', 'Sino', 'Mientras'
+
+// Símbolos simples:
+','   → TOK_COMMA
+';'   → TOK_SEMI
+'('   → TOK_LPAREN
+')'   → TOK_RPAREN
+'{'   → TOK_LBRACE
+'}'   → TOK_RBRACE
+
+// Operadores y comparadores:
+'='   → TOK_ASSIGN   (si aparece “==” → TOK_EQ)
+'=='  → TOK_EQ
+'!='  → TOK_NEQ
+'<'   → TOK_LT
+'<='  → TOK_LE
+'>'   → TOK_GT
+'>='  → TOK_GE
+
+'+'   → TOK_PLUS
+'-'   → TOK_MINUS
+'*'   → TOK_MULT
+'/'   → TOK_DIV
+
+EOF              → TOK_EOF
+Cualquier otro carácter no reconocido → TOK_UNKNOWN

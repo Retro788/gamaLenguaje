@@ -1,0 +1,1217 @@
+/**************************************************************
+ * analyzer.c
+ *
+ * Mini‐analizador sintáctico + intérprete (parser de descenso recursivo)
+ * para un lenguaje muy sencillo que reconoce:
+ *
+ *   - Declaración de variables:   Entero a = 8, b, c = 5;
+ *   - Salida (Imprimir):          Imprimir( a + b );
+ *   - Entrada (Leer):             Leer( x );
+ *   - Asignación/ariméticas:      x = y * (z + 2) - 5;
+ *   - Condicional (Si/Sino):      Si ( x < 10 ) Imprimir(x); Sino x = 0;
+ *   - Bucle (Mientras):           Mientras ( x > 0 ) { Imprimir(x); x = x - 1; }
+ *   - Bloques:                    { stmt1; stmt2; ... }
+ *
+ * Gramática (BNF):
+ *
+ *   <program>        ::= <stmt_list> EOF
+ *
+ *   <stmt_list>      ::= <stmt> <stmt_list> | ε
+ *
+ *   <stmt>           ::= <decl_stmt>
+ *                     | <print_stmt>
+ *                     | <read_stmt>
+ *                     | <assign_stmt>
+ *                     | <if_stmt>
+ *                     | <while_stmt>
+ *                     | <block_stmt>
+ *
+ *   <decl_stmt>      ::= <type> <var_list> ';'
+ *   <type>           ::= 'Entero' | 'Caracter' | 'Flotante'
+ *   <var_list>       ::= <var_decl> ( ',' <var_decl> )*
+ *   <var_decl>       ::= IDENT [ '=' <expr> ]
+ *
+ *   <print_stmt>     ::= 'Imprimir' '(' <expr> ')' ';'
+ *   <read_stmt>      ::= 'Leer' '(' IDENT ')' ';'
+ *
+ *   <assign_stmt>    ::= IDENT '=' <expr> ';'
+ *
+ *   <if_stmt>        ::= 'Si' '(' <expr> ')' <stmt> [ 'Sino' <stmt> ]
+ *   <while_stmt>     ::= 'Mientras' '(' <expr> ')' <stmt>
+ *
+ *   <block_stmt>     ::= '{' <stmt_list> '}'
+ *
+ *   <expr>           ::= <rel_expr>
+ *   <rel_expr>       ::= <add_expr> ( ( '==' | '!=' | '<' | '>' | '<=' | '>=' ) <add_expr> )*
+ *   <add_expr>       ::= <mul_expr> ( ( '+' | '-' ) <mul_expr> )*
+ *   <mul_expr>       ::= <unary_expr> ( ( '*' | '/' ) <unary_expr> )*
+ *   <unary_expr>     ::= [ '-' ] <primary>
+ *   <primary>        ::= '(' <expr> ')' | NUM | IDENT
+ *
+ * Tokens léxicos:
+ *   - IDENT: (Letra) (Letra|Dígito)*
+ *   - NUM:   (Dígito)+
+ *   - Palabras reservadas: Entero, Caracter, Flotante, Imprimir, Leer, Si, Sino, Mientras
+ *   - Símbolos: ',' ';' '(' ')' '{' '}' 
+ *   - Operadores: '+' '-' '*' '/'
+ *   - Relacionales: '==' '!=' '<' '>' '<=' '>='
+ *   - Asignación: '='
+ *   - EOF  → TOK_EOF
+ *   - Cualquier otro → TOK_UNKNOWN
+ *
+ * Para compilar en Windows (MinGW-w64):
+ *   1) Asegúrate de que analyzer.c no tenga BOM. 
+ *      Si usas VS Code, guárdalo como UTF-8 sin BOM. 
+ *      O bien, ábrelo con el Bloc de notas y “Guardar como… → ANSI”.
+ *
+ *   2) Abre CMD (no PowerShell), navega a la carpeta:
+ *      cd C:\Users\Retro788\Desktop\gamaLenguaje
+ *
+ *   3) Compila con:
+ *      gcc -Wall -o analyzer analyzer.c
+ *
+ *   4) Ejecuta:
+ *      analyzer.exe
+ *      (Pega tu programa línea a línea y pulsa Ctrl+Z ⏎ cuando acabes.
+ *       Cuando salga “Leer(x);” teclea el número y pulsa Enter.)
+ *
+ * Si todo es correcto, el intérprete leerá tu input (línea por línea)
+ * e imprimirá los resultados correspondientes.  
+ *
+ **************************************************************/
+
+
+ #define _CRT_SECURE_NO_WARNINGS
+
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <ctype.h>
+ 
+ /*==============================================================
+  *                       DEFINICIONES GLOBALES
+  *=============================================================*/
+ 
+ #define MAX_TOKENS       2048
+ #define MAX_LEXEME_LEN    128
+ #define MAX_VARS          256
+ 
+ /*--------------------------------------------------------------
+  * Tipo de datos para variables en la tabla de símbolos. 
+  * Para simplificar, todas son enteros (Entero, Caracter, Flotante 
+  * → se almacenan como int). 
+  *-------------------------------------------------------------*/
+ typedef struct {
+     char   name[MAX_LEXEME_LEN];  // Identificador
+     int    value;                 // Valor
+     int    is_defined;            // 0 = no existe aún, 1 = ya existe
+ } Symbol;
+ 
+ /*--------------------------------------------------------------
+  * Vector global para guardar variables: 
+  *   symtab[0..num_vars-1] 
+  *-------------------------------------------------------------*/
+ static Symbol symtab[MAX_VARS];
+ static int    num_vars = 0;
+ 
+ /*--------------------------------------------------------------
+  * Enumeración de tokens (TOK_XXX) 
+  *-------------------------------------------------------------*/
+ typedef enum {
+     // palabras reservadas
+     TOK_INT,       // “Entero”
+     TOK_CHAR,      // “Caracter”
+     TOK_FLOAT,     // “Flotante”
+     TOK_PRINT,     // “Imprimir”
+     TOK_READ,      // “Leer”
+     TOK_IF,        // “Si”
+     TOK_ELSE,      // “Sino”
+     TOK_WHILE,     // “Mientras”
+ 
+     // identificador y número
+     TOK_IDENT,     // identificador: letra( letra|dígito )*
+     TOK_NUM,       // número: dígito+
+ 
+     // operadores y símbolos
+     TOK_COMMA,     // ‘,’
+     TOK_SEMI,      // ‘;’
+     TOK_LPAREN,    // ‘(’
+     TOK_RPAREN,    // ‘)’
+     TOK_LBRACE,    // ‘{’
+     TOK_RBRACE,    // ‘}’
+ 
+     TOK_ASSIGN,    // ‘=’
+     TOK_EQ,        // ‘==’
+     TOK_NEQ,       // ‘!=’
+     TOK_LT,        // ‘<’
+     TOK_LE,        // ‘<=’
+     TOK_GT,        // ‘>’
+     TOK_GE,        // ‘>=’
+ 
+     TOK_PLUS,      // ‘+’
+     TOK_MINUS,     // ‘-’
+     TOK_MULT,      // ‘*’
+     TOK_DIV,       // ‘/’
+ 
+     TOK_EOF,       // fin de archivo 
+     TOK_UNKNOWN    // cualquier otro
+ } TokenType;
+ 
+ /*--------------------------------------------------------------
+  * Un token consta de su tipo y su lexema (texto). 
+  *-------------------------------------------------------------*/
+ typedef struct {
+     TokenType type;
+     char      lexeme[MAX_LEXEME_LEN];
+ } Token;
+ 
+ /*--------------------------------------------------------------
+  * Vector global de tokens (producidos por el lexer) y 
+  * contadores:
+  *
+  *   tokens[0..num_tokens-1]   = lista de tokens 
+  *   num_tokens = # real de tokens
+  *   cur_token  = índice del token “actual” para el parser
+  *-------------------------------------------------------------*/
+ static Token tokens[MAX_TOKENS];
+ static int   num_tokens = 0;
+ static int   cur_token  = 0;
+ 
+ 
+ /*==============================================================
+  *                   FUNCIONES DE TABLA DE SÍMBOLOS
+  *=============================================================*/
+ 
+ /**
+  * lookup_symbol(nombre):
+  *   Busca si existe ya una variable con nombre “nombre” 
+  *   en symtab. Si la encuentra, devuelve su índice [0..num_vars-1].
+  *   Si no existe, devuelve -1.
+  */
+ static int lookup_symbol(const char *nombre) {
+     for (int i = 0; i < num_vars; i++) {
+         if (strcmp(symtab[i].name, nombre) == 0) {
+             return i;
+         }
+     }
+     return -1;
+ }
+ 
+ /**
+  * add_symbol(nombre):
+  *   Agrega una nueva variable a la tabla de símbolos con 
+  *   valor 0 e is_defined=0. Devuelve el índice donde la insertó. 
+  *   Si ya existe o si no hay espacio, aborta con error.
+  */
+ static int add_symbol(const char *nombre) {
+     if (num_vars >= MAX_VARS) {
+         fprintf(stderr, "Error: demasiadas variables (>= %d).\n", MAX_VARS);
+         exit(1);
+     }
+     int idx = lookup_symbol(nombre);
+     if (idx != -1) {
+         // Ya existe
+         return idx;
+     }
+     strcpy(symtab[num_vars].name, nombre);
+     symtab[num_vars].value = 0;
+     symtab[num_vars].is_defined = 0;
+     num_vars++;
+     return num_vars - 1;
+ }
+ 
+ /**
+  * set_symbol_value(nombre, val):
+  *   Busca la variable “nombre” en la tabla. Si no existe, la crea
+  *   y luego le asigna el valor “val”. Si existe, simplemente actualiza
+  *   su valor. Marca is_defined=1.
+  */
+ static void set_symbol_value(const char *nombre, int val) {
+     int idx = lookup_symbol(nombre);
+     if (idx < 0) {
+         idx = add_symbol(nombre);
+     }
+     symtab[idx].value = val;
+     symtab[idx].is_defined = 1;
+ }
+ 
+ /**
+  * get_symbol_value(nombre):
+  *   Devuelve el valor entero de la variable “nombre”. Si no existe
+  *   o no fue inicializada (is_defined=0), da error y termina.
+  */
+ static int get_symbol_value(const char *nombre) {
+     int idx = lookup_symbol(nombre);
+     if (idx < 0) {
+         fprintf(stderr, "Error: variable '%s' no declarada.\n", nombre);
+         exit(1);
+     }
+     if (symtab[idx].is_defined == 0) {
+         fprintf(stderr, "Error: variable '%s' no inicializada.\n", nombre);
+         exit(1);
+     }
+     return symtab[idx].value;
+ }
+ 
+ 
+ /*==============================================================
+  *                      ANALIZADOR LÉXICO
+  *=============================================================*/
+ 
+ /**
+  * next_char():
+  *   Lee un carácter de stdin (getchar). Devuelve EOF si ya no hay nada.
+  */
+ static int next_char(void) {
+     int c = getchar();
+     return (c == EOF ? EOF : c);
+ }
+ 
+ /**
+  * unget_char(c):
+  *   “Devuelve” c al flujo de entrada, para que next_char lo lea de nuevo.
+  */
+ static void unget_char(int c) {
+     if (c != EOF) {
+         ungetc(c, stdin);
+     }
+ }
+ 
+ /**
+  * add_token(type, lexe):
+  *   Agrega al arreglo “tokens” un nuevo token con tipo “type” y texto “lexe”.
+  */
+ static void add_token(TokenType type, const char *lexe) {
+     if (num_tokens >= MAX_TOKENS) {
+         fprintf(stderr, "Error: demasiados tokens (>= %d).\n", MAX_TOKENS);
+         exit(1);
+     }
+     tokens[num_tokens].type = type;
+     strncpy(tokens[num_tokens].lexeme, lexe, MAX_LEXEME_LEN - 1);
+     tokens[num_tokens].lexeme[MAX_LEXEME_LEN - 1] = '\0';
+     num_tokens++;
+ }
+ 
+ /**
+  * yylex():
+  *   Reconoce un solo token de la entrada estándar y lo añade a tokens[].
+  *   Retorna el TokenType. Espacios/tab/newline se saltan:
+  *    - Palabra que empieza con letra    → IDENT o palabra reservada
+  *    - Secuencia de dígitos             → NUM
+  *    - “==”, “!=”, “<=”, “>=”            → TOK_EQ/TOK_NEQ/TOK_LE/TOK_GE
+  *    - ‘<’, ‘>’, ‘=’ (asign.)           → TOK_LT/TOK_GT/TOK_ASSIGN
+  *    - Símbolos simples: ',', ';', '(', ')', '{', '}' 
+  *    - Operadores: '+', '-', '*', '/'
+  *    - EOF → TOK_EOF
+  *    - Cualquier otro → TOK_UNKNOWN
+  */
+ static TokenType yylex(void) {
+     int c;
+     char buffer[MAX_LEXEME_LEN];
+     int len;
+ 
+     // 1) Saltar espacios en blanco y newline
+     do {
+         c = next_char();
+     } while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+ 
+     if (c == EOF) {
+         return TOK_EOF;
+     }
+ 
+     // 2) Si comienza con letra → identificador o palabra reservada
+     if (isalpha(c)) {
+         len = 0;
+         do {
+             if (len < MAX_LEXEME_LEN - 1) {
+                 buffer[len++] = (char)c;
+             }
+             c = next_char();
+         } while (isalpha(c) || isdigit(c));
+         buffer[len] = '\0';
+         unget_char(c);
+ 
+         // Creamos una copia en minúsculas para comparar sin distinción de mayúsculas/minúsculas
+         char tmp[MAX_LEXEME_LEN];
+         for (int i = 0; buffer[i]; i++) {
+             tmp[i] = tolower((unsigned char)buffer[i]);
+         }
+         tmp[len] = '\0';
+ 
+         // Verificamos si es una palabra reservada en español
+         if (strcmp(tmp, "entero") == 0) {
+             add_token(TOK_INT, buffer);
+             return TOK_INT;
+         }
+         if (strcmp(tmp, "caracter") == 0) {
+             add_token(TOK_CHAR, buffer);
+             return TOK_CHAR;
+         }
+         if (strcmp(tmp, "flotante") == 0) {
+             add_token(TOK_FLOAT, buffer);
+             return TOK_FLOAT;
+         }
+         if (strcmp(tmp, "imprimir") == 0) {
+             add_token(TOK_PRINT, buffer);
+             return TOK_PRINT;
+         }
+         if (strcmp(tmp, "leer") == 0) {
+             add_token(TOK_READ, buffer);
+             return TOK_READ;
+         }
+         if (strcmp(tmp, "si") == 0) {
+             add_token(TOK_IF, buffer);
+             return TOK_IF;
+         }
+         if (strcmp(tmp, "sino") == 0) {
+             add_token(TOK_ELSE, buffer);
+             return TOK_ELSE;
+         }
+         if (strcmp(tmp, "mientras") == 0) {
+             add_token(TOK_WHILE, buffer);
+             return TOK_WHILE;
+         }
+         // Si no es palabra reservada, es un IDENT
+         add_token(TOK_IDENT, buffer);
+         return TOK_IDENT;
+     }
+ 
+     // 3) Si comienza con dígito → NUM
+     if (isdigit(c)) {
+         len = 0;
+         do {
+             if (len < MAX_LEXEME_LEN - 1) {
+                 buffer[len++] = (char)c;
+             }
+             c = next_char();
+         } while (isdigit(c));
+         buffer[len] = '\0';
+         unget_char(c);
+ 
+         add_token(TOK_NUM, buffer);
+         return TOK_NUM;
+     }
+ 
+     // 4) Reconocer operadores relacionales de dos caracteres:
+     if (c == '=') {
+         int next = next_char();
+         if (next == '=') {
+             add_token(TOK_EQ, "==");
+             return TOK_EQ;
+         } else {
+             unget_char(next);
+             add_token(TOK_ASSIGN, "=");
+             return TOK_ASSIGN;
+         }
+     }
+     if (c == '!') {
+         int next = next_char();
+         if (next == '=') {
+             add_token(TOK_NEQ, "!=");
+             return TOK_NEQ;
+         } else {
+             unget_char(next);
+             add_token(TOK_UNKNOWN, "!");
+             return TOK_UNKNOWN;
+         }
+     }
+     if (c == '<') {
+         int next = next_char();
+         if (next == '=') {
+             add_token(TOK_LE, "<=");
+             return TOK_LE;
+         } else {
+             unget_char(next);
+             add_token(TOK_LT, "<");
+             return TOK_LT;
+         }
+     }
+     if (c == '>') {
+         int next = next_char();
+         if (next == '=') {
+             add_token(TOK_GE, ">=");
+             return TOK_GE;
+         } else {
+             unget_char(next);
+             add_token(TOK_GT, ">");
+             return TOK_GT;
+         }
+     }
+ 
+     // 5) Símbolos simples y operadores de un solo carácter
+     switch (c) {
+         case ',':
+             add_token(TOK_COMMA, ",");
+             return TOK_COMMA;
+         case ';':
+             add_token(TOK_SEMI, ";");
+             return TOK_SEMI;
+         case '(':
+             add_token(TOK_LPAREN, "(");
+             return TOK_LPAREN;
+         case ')':
+             add_token(TOK_RPAREN, ")");
+             return TOK_RPAREN;
+         case '{':
+             add_token(TOK_LBRACE, "{");
+             return TOK_LBRACE;
+         case '}':
+             add_token(TOK_RBRACE, "}");
+             return TOK_RBRACE;
+         case '+':
+             add_token(TOK_PLUS, "+");
+             return TOK_PLUS;
+         case '-':
+             add_token(TOK_MINUS, "-");
+             return TOK_MINUS;
+         case '*':
+             add_token(TOK_MULT, "*");
+             return TOK_MULT;
+         case '/':
+             add_token(TOK_DIV, "/");
+             return TOK_DIV;
+         default:
+             // Cualquier otro carácter → TOK_UNKNOWN
+             buffer[0] = (char)c;
+             buffer[1] = '\0';
+             add_token(TOK_UNKNOWN, buffer);
+             return TOK_UNKNOWN;
+     }
+ }
+ 
+ /**
+  * tokenize_input():
+  *   Lee toda la entrada estándar (stdin) hasta EOF, llamando a yylex()
+  *   repetidamente. Cuando yylex() devuelve TOK_EOF, sale del bucle y
+  *   añade al final un único token TOK_EOF.
+  */
+ static void tokenize_input(void) {
+     TokenType t;
+     do {
+         t = yylex();
+     } while (t != TOK_EOF);
+     add_token(TOK_EOF, "EOF");
+ }
+ 
+ 
+ /*==============================================================
+  *                  FUNCIONES AUXILIARES DEL PARSER
+  *=============================================================*/
+ 
+ /**
+  * lookahead():
+  *   Devuelve el TokenType de tokens[cur_token], o TOK_EOF si
+  *   cur_token >= num_tokens.
+  */
+ static TokenType lookahead(void) {
+     if (cur_token < num_tokens) {
+         return tokens[cur_token].type;
+     }
+     return TOK_EOF;
+ }
+ 
+ /**
+  * match(expected):
+  *   Si lookahead()==expected, avanza cur_token++ (consume el token).
+  *   Si no coincide, imprime un mensaje de error y termina con exit(1).
+  */
+ static void match(TokenType expected) {
+     if (lookahead() == expected) {
+         cur_token++;
+     } else {
+         fprintf(stderr,
+                 "Error de sintaxis: se esperaba token %d ('%s'), "
+                 "pero vino token %d ('%s').\n",
+                 expected,
+                 tokens[cur_token].lexeme,
+                 lookahead(),
+                 tokens[cur_token].lexeme);
+         exit(1);
+     }
+ }
+ 
+ /**
+  * expect_ident():
+  *   Verifica que el token actual sea TOK_IDENT. Si lo es, devuelve
+  *   el lexema (tokens[cur_token].lexeme) y avanza cur_token++. Si no,
+  *   error.
+  */
+ static char *expect_ident(void) {
+     if (lookahead() == TOK_IDENT) {
+         char *name = tokens[cur_token].lexeme;
+         cur_token++;
+         return name;
+     } else {
+         fprintf(stderr,
+                 "Error de sintaxis: se esperaba IDENT, "
+                 "pero vino '%s'.\n",
+                 tokens[cur_token].lexeme);
+         exit(1);
+     }
+     return NULL; // solo para evitar warning
+ }
+ 
+ 
+ /*==============================================================
+  *          PARSER DE EXPRESIONES (EVALUACIÓN EN TIEMPO REAL)
+  *=============================================================*/
+ 
+ /**
+  * Prototipos (se definen más abajo):
+  */
+ static int parse_expr(void);
+ static int parse_rel_expr(void);
+ static int parse_add_expr(void);
+ static int parse_mul_expr(void);
+ static int parse_unary_expr(void);
+ static int parse_primary(void);
+ 
+ /*
+  * parse_expr():
+  *   En esta gramática, <expr> ::= <rel_expr>
+  */
+ static int parse_expr(void) {
+     return parse_rel_expr();
+ }
+ 
+ /*
+  * <rel_expr> ::= <add_expr> { ( '==' | '!=' | '<' | '>' | '<=' | '>=' ) <add_expr> }
+  */
+ static int parse_rel_expr(void) {
+     int left = parse_add_expr();
+ 
+     while (1) {
+         TokenType t = lookahead();
+         if (t == TOK_EQ || t == TOK_NEQ || t == TOK_LT ||
+             t == TOK_GT || t == TOK_LE || t == TOK_GE) {
+             cur_token++;
+             int right = parse_add_expr();
+             switch (t) {
+                 case TOK_EQ:  left = (left == right); break;
+                 case TOK_NEQ: left = (left != right); break;
+                 case TOK_LT:  left = (left < right);  break;
+                 case TOK_GT:  left = (left > right);  break;
+                 case TOK_LE:  left = (left <= right); break;
+                 case TOK_GE:  left = (left >= right); break;
+                 default: break;
+             }
+         } else {
+             break;
+         }
+     }
+     return left;
+ }
+ 
+ /*
+  * <add_expr> ::= <mul_expr> { ( '+' | '-' ) <mul_expr> }
+  */
+ static int parse_add_expr(void) {
+     int left = parse_mul_expr();
+ 
+     while (1) {
+         TokenType t = lookahead();
+         if (t == TOK_PLUS || t == TOK_MINUS) {
+             cur_token++;
+             int right = parse_mul_expr();
+             if (t == TOK_PLUS) {
+                 left = left + right;
+             } else {
+                 left = left - right;
+             }
+         } else {
+             break;
+         }
+     }
+     return left;
+ }
+ 
+ /*
+  * <mul_expr> ::= <unary_expr> { ( '*' | '/' ) <unary_expr> }
+  */
+ static int parse_mul_expr(void) {
+     int left = parse_unary_expr();
+ 
+     while (1) {
+         TokenType t = lookahead();
+         if (t == TOK_MULT || t == TOK_DIV) {
+             cur_token++;
+             int right = parse_unary_expr();
+             if (t == TOK_MULT) {
+                 left = left * right;
+             } else {
+                 if (right == 0) {
+                     fprintf(stderr, "Error: división por cero.\n");
+                     exit(1);
+                 }
+                 left = left / right;
+             }
+         } else {
+             break;
+         }
+     }
+     return left;
+ }
+ 
+ /*
+  * <unary_expr> ::= [ '-' ] <primary>
+  */
+ static int parse_unary_expr(void) {
+     if (lookahead() == TOK_MINUS) {
+         cur_token++;
+         int val = parse_primary();
+         return -val;
+     }
+     return parse_primary();
+ }
+ 
+ /*
+  * <primary> ::= '(' <expr> ')' | NUM | IDENT
+  */
+ static int parse_primary(void) {
+     if (lookahead() == TOK_LPAREN) {
+         match(TOK_LPAREN);
+         int val = parse_expr();
+         match(TOK_RPAREN);
+         return val;
+     } else if (lookahead() == TOK_NUM) {
+         int val = atoi(tokens[cur_token].lexeme);
+         cur_token++;
+         return val;
+     } else if (lookahead() == TOK_IDENT) {
+         // Variable: obtenemos su valor de la tabla de símbolos
+         char *name = tokens[cur_token].lexeme;
+         cur_token++;
+         return get_symbol_value(name);
+     } else {
+         fprintf(stderr,
+                 "Error de sintaxis en <primary>: se esperaba "
+                 "NUM, IDENT o '(', pero vino '%s'.\n",
+                 tokens[cur_token].lexeme);
+         exit(1);
+     }
+     return 0; // para evitar warning
+ }
+ 
+ 
+ /*==============================================================
+  *         PARSER DE DECLARACIONES (DECL_STMT)
+  *=============================================================*/
+ 
+ /*
+  * <decl_stmt> ::= <type> <var_list> ';'
+  * <type>       ::= 'Entero' | 'Caracter' | 'Flotante'
+  * <var_list>   ::= <var_decl> ( ',' <var_decl> )*
+  * <var_decl>   ::= IDENT [ '=' <expr> ]
+  *
+  * Semántica:
+  *    - Cada identificador se agrega a la tabla de símbolos con 
+  *      is_defined=0 por defecto.
+  *    - Si hay “= <expr>”, entonces evaluamos <expr> y asignamos el
+  *      valor a la variable, marcando is_defined=1.
+  *    - Si no hay “=”, la variable queda definida con valor 0 e
+  *      is_defined=0 (error si se usa antes de asignar).
+  */
+ static void parse_decl_stmt(void) {
+     // 1) <type>
+     TokenType t = lookahead();
+     if (t == TOK_INT || t == TOK_CHAR || t == TOK_FLOAT) {
+         cur_token++;
+     } else {
+         fprintf(stderr,
+                 "Error de sintaxis en <decl_stmt>: se esperaba tipo 'Entero', 'Caracter' o 'Flotante', "
+                 "pero vino '%s'.\n",
+                 tokens[cur_token].lexeme);
+         exit(1);
+     }
+ 
+     // 2) <var_list> ::= <var_decl> (',' <var_decl> )*
+     while (1) {
+         // <var_decl> ::= IDENT [ '=' <expr> ]
+         if (lookahead() == TOK_IDENT) {
+             char *varname = tokens[cur_token].lexeme;
+             int idx = add_symbol(varname);  // crea o recupera índice
+             symtab[idx].is_defined = 0;     // aún no asignado
+ 
+             cur_token++;
+             if (lookahead() == TOK_ASSIGN) {
+                 match(TOK_ASSIGN);
+                 int val = parse_expr();
+                 set_symbol_value(varname, val);
+             }
+         } else {
+             fprintf(stderr,
+                     "Error de sintaxis en <var_list>: se esperaba IDENT, "
+                     "pero vino '%s'.\n",
+                     tokens[cur_token].lexeme);
+             exit(1);
+         }
+ 
+         // Si viene coma, se repite el var_decl
+         if (lookahead() == TOK_COMMA) {
+             match(TOK_COMMA);
+         } else {
+             break;
+         }
+     }
+ 
+     // 3) Consumir ';'
+     match(TOK_SEMI);
+ }
+ 
+ 
+ /*==============================================================
+  *            PARSER DE INSTRUCCIONES (STMT)
+  *=============================================================*/
+ 
+ /*
+  * Prototipos recursivos:
+  */
+ static void parse_stmt(void);
+ static void parse_print_stmt(void);
+ static void parse_read_stmt(void);
+ static void parse_assign_stmt(void);
+ static void parse_if_stmt(void);
+ static void parse_while_stmt(void);
+ static void parse_block_stmt(void);
+ 
+ /*
+  * <stmt> ::= <decl_stmt>
+  *          | <print_stmt>
+  *          | <read_stmt>
+  *          | <assign_stmt>
+  *          | <if_stmt>
+  *          | <while_stmt>
+  *          | <block_stmt>
+  */
+ static void parse_stmt(void) {
+     switch (lookahead()) {
+         case TOK_INT:
+         case TOK_CHAR:
+         case TOK_FLOAT:
+             parse_decl_stmt();
+             break;
+ 
+         case TOK_PRINT:
+             parse_print_stmt();
+             break;
+ 
+         case TOK_READ:
+             parse_read_stmt();
+             break;
+ 
+         case TOK_IDENT:
+             parse_assign_stmt();
+             break;
+ 
+         case TOK_IF:
+             parse_if_stmt();
+             break;
+ 
+         case TOK_WHILE:
+             parse_while_stmt();
+             break;
+ 
+         case TOK_LBRACE:
+             parse_block_stmt();
+             break;
+ 
+         default:
+             fprintf(stderr,
+                     "Error de sintaxis en <stmt>: token inesperado '%s'.\n",
+                     tokens[cur_token].lexeme);
+             exit(1);
+     }
+ }
+ 
+ /*
+  * <print_stmt> ::= 'Imprimir' '(' <expr> ')' ';'
+  * Semántica: evalúa <expr> y muestra su valor por stdout (seguido de newline).
+  */
+ static void parse_print_stmt(void) {
+     match(TOK_PRINT);
+     match(TOK_LPAREN);
+     int val = parse_expr();
+     match(TOK_RPAREN);
+     match(TOK_SEMI);
+     printf("%d\n", val);
+ }
+ 
+ /*
+  * <read_stmt> ::= 'Leer' '(' IDENT ')' ';'
+  * Semántica: lee un entero de stdin y lo asigna a la variable IDENT. 
+  */
+ static void parse_read_stmt(void) {
+     match(TOK_READ);
+     match(TOK_LPAREN);
+     char *varname = expect_ident();
+     match(TOK_RPAREN);
+     match(TOK_SEMI);
+ 
+     int x;
+     if (scanf("%d", &x) != 1) {
+         fprintf(stderr, "Error de runtime: no se pudo leer un entero.\n");
+         exit(1);
+     }
+     set_symbol_value(varname, x);
+ }
+ 
+ /*
+  * <assign_stmt> ::= IDENT '=' <expr> ';'
+  * Semántica: evalúa <expr> y asigna el resultado a la variable.
+  */
+ static void parse_assign_stmt(void) {
+     char *varname = expect_ident();
+     match(TOK_ASSIGN);
+     int val = parse_expr();
+     match(TOK_SEMI);
+     set_symbol_value(varname, val);
+ }
+ 
+ /*
+  * <if_stmt> ::= 'Si' '(' <expr> ')' <stmt> [ 'Sino' <stmt> ]
+  *
+  * Semántica:
+  *   - Si cond ≠ 0: ejecutar <stmt> de la rama THEN y descartar la rama 'Sino'.
+  *   - Si cond == 0: descartar <stmt> de la rama THEN y, si existe 'Sino', ejecutar la rama ELSE.
+  */
+ static void parse_if_stmt(void) {
+     match(TOK_IF);           // consume 'Si'
+     match(TOK_LPAREN);       // consume '('
+     int cond = parse_expr(); // evalúa la condición
+     match(TOK_RPAREN);       // consume ')'
+ 
+     if (cond) {
+         // === rama THEN ===
+         parse_stmt();
+         // Si hay 'Sino', descartamos sintácticamente la rama ELSE
+         if (lookahead() == TOK_ELSE) {
+             match(TOK_ELSE);
+             // Ignorar sintácticamente el <stmt> de la rama ELSE:
+             if (lookahead() == TOK_INT || lookahead() == TOK_CHAR || lookahead() == TOK_FLOAT) {
+                 // decl_stmt → tipo var_list ;
+                 cur_token++;
+                 do {
+                     if (lookahead() == TOK_IDENT) {
+                         cur_token++;
+                         if (lookahead() == TOK_ASSIGN) {
+                             cur_token++;
+                             int nivel_p = 0;
+                             do {
+                                 TokenType tt = lookahead();
+                                 if (tt == TOK_LPAREN) nivel_p++;
+                                 else if (tt == TOK_RPAREN) nivel_p--;
+                                 cur_token++;
+                             } while (!(nivel_p == 0 && (lookahead() == TOK_COMMA || lookahead() == TOK_SEMI)));
+                         }
+                     } else {
+                         fprintf(stderr,
+                                 "Error de sintaxis al ignorar <decl_stmt> en ELSE: '%s'.\n",
+                                 tokens[cur_token].lexeme);
+                         exit(1);
+                     }
+                     if (lookahead() == TOK_COMMA) {
+                         match(TOK_COMMA);
+                     } else {
+                         break;
+                     }
+                 } while (1);
+                 match(TOK_SEMI);
+             }
+             else if (lookahead() == TOK_PRINT) {
+                 // print_stmt → Imprimir ( expr ) ;
+                 match(TOK_PRINT);
+                 match(TOK_LPAREN);
+                 int nivel_p = 0;
+                 do {
+                     if (lookahead() == TOK_LPAREN) nivel_p++;
+                     else if (lookahead() == TOK_RPAREN) nivel_p--;
+                     cur_token++;
+                 } while (!(nivel_p == 0 && lookahead() == TOK_RPAREN));
+                 match(TOK_RPAREN);
+                 match(TOK_SEMI);
+             }
+             else if (lookahead() == TOK_READ) {
+                 // read_stmt → Leer ( IDENT ) ;
+                 match(TOK_READ);
+                 match(TOK_LPAREN);
+                 if (lookahead() == TOK_IDENT) cur_token++;
+                 match(TOK_RPAREN);
+                 match(TOK_SEMI);
+             }
+             else if (lookahead() == TOK_IDENT) {
+                 // assign_stmt → IDENT = expr ;
+                 cur_token++;
+                 match(TOK_ASSIGN);
+                 int nivel_p = 0;
+                 do {
+                     if (lookahead() == TOK_LPAREN) nivel_p++;
+                     else if (lookahead() == TOK_RPAREN) nivel_p--;
+                     cur_token++;
+                 } while (!(nivel_p == 0 && lookahead() == TOK_SEMI));
+                 match(TOK_SEMI);
+             }
+             else if (lookahead() == TOK_IF) {
+                 // if_stmt anidado
+                 cur_token++;
+                 match(TOK_LPAREN);
+                 int nivel_p = 0;
+                 do {
+                     if (lookahead() == TOK_LPAREN) nivel_p++;
+                     else if (lookahead() == TOK_RPAREN) nivel_p--;
+                     cur_token++;
+                 } while (!(nivel_p == 0 && lookahead() == TOK_RPAREN));
+                 match(TOK_RPAREN);
+                 parse_if_stmt(); // ignora recursivamente
+             }
+             else if (lookahead() == TOK_WHILE) {
+                 // while_stmt anidado
+                 cur_token++;
+                 match(TOK_LPAREN);
+                 int nivel_p = 0;
+                 do {
+                     if (lookahead() == TOK_LPAREN) nivel_p++;
+                     else if (lookahead() == TOK_RPAREN) nivel_p--;
+                     cur_token++;
+                 } while (!(nivel_p == 0 && lookahead() == TOK_RPAREN));
+                 match(TOK_RPAREN);
+                 // Ignorar cuerpo (puede ser bloque o sentencia única)
+                 if (lookahead() == TOK_LBRACE) {
+                     int brace_nivel = 0;
+                     do {
+                         if (lookahead() == TOK_LBRACE) brace_nivel++;
+                         else if (lookahead() == TOK_RBRACE) brace_nivel--;
+                         cur_token++;
+                     } while (brace_nivel > 0 && lookahead() != TOK_EOF);
+                 } else {
+                     parse_stmt(); // descarta la sentencia única
+                 }
+             }
+             else if (lookahead() == TOK_LBRACE) {
+                 // bloque_stmt → ignorar todo hasta cerrar '}'
+                 int brace_nivel = 0;
+                 do {
+                     if (lookahead() == TOK_LBRACE) brace_nivel++;
+                     else if (lookahead() == TOK_RBRACE) brace_nivel--;
+                     cur_token++;
+                 } while (brace_nivel > 0 && lookahead() != TOK_EOF);
+             }
+             else {
+                 fprintf(stderr,
+                         "Error de sintaxis al ignorar rama ‘Sino’: token '%s'.\n",
+                         tokens[cur_token].lexeme);
+                 exit(1);
+             }
+         }
+     }
+     else {
+         // cond == 0 → descartamos la rama THEN y, si hay "Sino", ejecutamos la rama ELSE
+         //int saved = cur_token;
+         // Ignorar sintácticamente la <sentencia> THEN
+         if (lookahead() == TOK_INT || lookahead() == TOK_CHAR || lookahead() == TOK_FLOAT) {
+             // decl_stmt
+             cur_token++;
+             do {
+                 if (lookahead() == TOK_IDENT) {
+                     cur_token++;
+                     if (lookahead() == TOK_ASSIGN) {
+                         cur_token++;
+                         int nivel_p = 0;
+                         do {
+                             if (lookahead() == TOK_LPAREN) nivel_p++;
+                             else if (lookahead() == TOK_RPAREN) nivel_p--;
+                             cur_token++;
+                         } while (!(nivel_p == 0 && (lookahead() == TOK_COMMA || lookahead() == TOK_SEMI)));
+                     }
+                 } else {
+                     fprintf(stderr,
+                             "Error de sintaxis al ignorar <decl_stmt>: '%s'.\n",
+                             tokens[cur_token].lexeme);
+                     exit(1);
+                 }
+                 if (lookahead() == TOK_COMMA) {
+                     match(TOK_COMMA);
+                 } else {
+                     break;
+                 }
+             } while (1);
+             match(TOK_SEMI);
+         }
+         else if (lookahead() == TOK_PRINT) {
+             // print_stmt
+             match(TOK_PRINT);
+             match(TOK_LPAREN);
+             int nivel_p = 0;
+             do {
+                 if (lookahead() == TOK_LPAREN) nivel_p++;
+                 else if (lookahead() == TOK_RPAREN) nivel_p--;
+                 cur_token++;
+             } while (!(nivel_p == 0 && lookahead() == TOK_RPAREN));
+             match(TOK_RPAREN);
+             match(TOK_SEMI);
+         }
+         else if (lookahead() == TOK_READ) {
+             // read_stmt
+             match(TOK_READ);
+             match(TOK_LPAREN);
+             if (lookahead() == TOK_IDENT) cur_token++;
+             match(TOK_RPAREN);
+             match(TOK_SEMI);
+         }
+         else if (lookahead() == TOK_IDENT) {
+             // assign_stmt
+             cur_token++;
+             match(TOK_ASSIGN);
+             int nivel_p = 0;
+             do {
+                 if (lookahead() == TOK_LPAREN) nivel_p++;
+                 else if (lookahead() == TOK_RPAREN) nivel_p--;
+                 cur_token++;
+             } while (!(nivel_p == 0 && lookahead() == TOK_SEMI));
+             match(TOK_SEMI);
+         }
+         else if (lookahead() == TOK_IF) {
+             // if_stmt anidado
+             cur_token++;
+             match(TOK_LPAREN);
+             int nivel_p = 0;
+             do {
+                 if (lookahead() == TOK_LPAREN) nivel_p++;
+                 else if (lookahead() == TOK_RPAREN) nivel_p--;
+                 cur_token++;
+             } while (!(nivel_p == 0 && lookahead() == TOK_RPAREN));
+             match(TOK_RPAREN);
+             parse_if_stmt();  // ignora recursivamente
+         }
+         else if (lookahead() == TOK_WHILE) {
+             // while_stmt anidado
+             cur_token++;
+             match(TOK_LPAREN);
+             int nivel_p = 0;
+             do {
+                 if (lookahead() == TOK_LPAREN) nivel_p++;
+                 else if (lookahead() == TOK_RPAREN) nivel_p--;
+                 cur_token++;
+             } while (!(nivel_p == 0 && lookahead() == TOK_RPAREN));
+             match(TOK_RPAREN);
+             // ignorar cuerpo
+             if (lookahead() == TOK_LBRACE) {
+                 int brace_nivel = 0;
+                 do {
+                     if (lookahead() == TOK_LBRACE) brace_nivel++;
+                     else if (lookahead() == TOK_RBRACE) brace_nivel--;
+                     cur_token++;
+                 } while (brace_nivel > 0 && lookahead() != TOK_EOF);
+             } else {
+                 parse_stmt();
+             }
+         }
+         else if (lookahead() == TOK_LBRACE) {
+             int brace_nivel = 0;
+             do {
+                 if (lookahead() == TOK_LBRACE) brace_nivel++;
+                 else if (lookahead() == TOK_RBRACE) brace_nivel--;
+                 cur_token++;
+             } while (brace_nivel > 0 && lookahead() != TOK_EOF);
+         }
+         else {
+             fprintf(stderr,
+                     "Error de sintaxis al ignorar <sentencia>: '%s'.\n",
+                     tokens[cur_token].lexeme);
+             exit(1);
+         }
+ 
+         // Una vez ignorada la rama THEN, comprobamos si hay 'Sino'
+         if (lookahead() == TOK_ELSE) {
+             match(TOK_ELSE);
+             // Ahora sí ejecutamos la rama ELSE:
+             parse_stmt();
+         }
+         // Si no hay 'Sino', continuamos adelante
+     }
+ }
+ 
+ /*
+  * <while_stmt> ::= 'Mientras' '(' <expr> ')' <stmt>
+  * Semántica: evalúa <expr>; mientras ≠0, ejecuta <stmt> y repite.
+  */
+ static void parse_while_stmt(void) {
+     match(TOK_WHILE);
+     match(TOK_LPAREN);
+ 
+     // Para “repetir” el bucle, guardamos la posición de cur_token justo después de '('
+     int cond_pos = cur_token;
+     int valor_cond = parse_expr();
+     match(TOK_RPAREN);
+ 
+     if (valor_cond) {
+         // Ejecutamos cuerpo (stmt) mientras expr ≠ 0
+         int body_pos = cur_token;
+         parse_stmt();
+         while (1) {
+             cur_token = cond_pos;
+             int nuevo = parse_expr();
+             if (!nuevo) {
+                 break;
+             }
+             match(TOK_RPAREN);
+             cur_token = body_pos;
+             parse_stmt();
+         }
+         // ——————————————————————
+         // IMPORTANTE: aquí falta consumir el último ')'
+         match(TOK_RPAREN);
+         // ——————————————————————
+     } else {
+         // cond == 0 → descartamos el <stmt> que sigue
+         int saved = cur_token;
+         parse_stmt();      // ignora sintácticamente
+         cur_token = saved; // regresamos a después de ')'
+         parse_stmt();      // consumimos esa <stmt> (pero no la ejecutamos)
+     }
+ }
+ 
+ /*
+  * <block_stmt> ::= '{' <stmt_list> '}'
+  * Semántica: simplemente ejecuta cada stmt hasta cerrar llave
+  */
+ static void parse_block_stmt(void) {
+     match(TOK_LBRACE);
+     while (lookahead() != TOK_RBRACE && lookahead() != TOK_EOF) {
+         parse_stmt();
+     }
+     match(TOK_RBRACE);
+ }
+ 
+ 
+ /*==============================================================
+  *               PARSER PRINCIPAL DE <program>
+  *=============================================================*/
+ 
+ /*
+  * <program> ::= <stmt_list> EOF
+  */
+ static void parse_program(void) {
+     while (lookahead() != TOK_EOF) {
+         parse_stmt();
+     }
+     match(TOK_EOF);
+ }
+ 
+ 
+ /*==============================================================
+  *                          MAIN
+  *=============================================================*/
+ 
+ int main(void) {
+     // 1) Tokenizar toda la entrada (en CMD, pulsa Ctrl+Z ⏎ para EOF)
+     tokenize_input();
+ 
+     // 2) Iniciar el parser
+     cur_token = 0;
+     parse_program();
+ 
+     // 3) Si no hubo error, imprimimos OK
+     printf("OK\n");
+     return 0;
+ }
+ 
