@@ -6,3 +6,5 @@ analyzer.exe
 *.exe
 # Backup and temporary files
 *~
+gama
+*.o

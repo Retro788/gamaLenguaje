@@ -1,32 +1,27 @@
 # Mini intérprete en español
 
-Este proyecto implementa un intérprete muy sencillo que reconoce un subconjunto de C en español. 
-Permite declarar variables enteras, leer y escribir valores, asignar expresiones y controlar el flujo con `Si`/`Sino` y `Mientras`.
+Este proyecto contiene un pequeño intérprete del lenguaje **Gama** con palabras reservadas en español. Ahora el código se encuentra dividido en módulos (`lexer`, `parser`, `symtab` y `main`).
+
+El intérprete soporta declaraciones de variables, lectura/escritura, condicionales, bucles y una construcción `Switch` básica.
 
 ## Compilación
 
-En Windows con GCC:
+En Linux o Windows con GCC:
 
 ```bash
-gcc -Wall analyzer.c -o analyzer.exe
-```
-
-En Linux:
-
-```bash
-gcc -Wall analyzer.c -o analyzer
+gcc -Wall src/*.c -o gama
 ```
 
 ## Uso
 
-El intérprete lee el programa de la entrada estándar. Se puede ejecutar con un archivo de ejemplo:
+El ejecutable acepta el archivo fuente como argumento. Opcionalmente puede generarse un archivo `.obj` con la lista de tokens:
 
 ```bash
-./analyzer < input.txt
+./gama programa.cpp [tokens.obj]
 ```
 
-El archivo `input.txt` contiene un programa que demuestra declaraciones, asignaciones y bucles.
+El archivo `input.txt` proporciona un ejemplo de programa.
 
 ## Licencia
 
-Este proyecto se distribuye bajo los términos de la licencia MIT. Consulte el archivo `LICENSE`.
+Este proyecto se distribuye bajo la licencia MIT. Consulte el archivo `LICENSE`.
