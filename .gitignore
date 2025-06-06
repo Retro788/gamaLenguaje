@@ -1,0 +1,8 @@
+# Ignore build artifacts
+analyzer.exe
+.ccls-cache/
+*.obj
+*.o
+*.exe
+# Backup and temporary files
+*~
