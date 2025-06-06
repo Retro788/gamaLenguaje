@@ -864,23 +864,47 @@ static void parse_sum_stmt(void);
  }
  
  /*
-  * <print_stmt> ::= 'Imprimir' '(' <expr> ')' ';'
-  * Semántica: evalúa <expr> y muestra su valor por stdout (seguido de newline).
-  */
+ * <print_stmt> ::=
+ *       'Imprimir' '(' ( <expr> | STRING ) ')' ';'
+ *     | 'Imprimir' '{' ( <expr> | STRING ) '}' ';'
+ * Semántica: evalúa la expresión (o imprime la cadena) y muestra el
+ * resultado por stdout seguido de un salto de línea.
+ */
 static void parse_print_stmt(void) {
     match(TOK_PRINT);
-    match(TOK_LPAREN);
-    if (lookahead() == TOK_STRING) {
-        char *s = tokens[cur_token].lexeme;
-        cur_token++;
-        match(TOK_RPAREN);
-        match(TOK_SEMI);
-        printf("%s\n", s);
+    if (lookahead() == TOK_LPAREN) {
+        match(TOK_LPAREN);
+        if (lookahead() == TOK_STRING) {
+            char *s = tokens[cur_token].lexeme;
+            cur_token++;
+            match(TOK_RPAREN);
+            match(TOK_SEMI);
+            printf("%s\n", s);
+        } else {
+            int val = parse_expr();
+            match(TOK_RPAREN);
+            match(TOK_SEMI);
+            printf("%d\n", val);
+        }
+    } else if (lookahead() == TOK_LBRACE) {
+        match(TOK_LBRACE);
+        if (lookahead() == TOK_STRING) {
+            char *s = tokens[cur_token].lexeme;
+            cur_token++;
+            match(TOK_RBRACE);
+            match(TOK_SEMI);
+            printf("%s\n", s);
+        } else {
+            int val = parse_expr();
+            match(TOK_RBRACE);
+            match(TOK_SEMI);
+            printf("%d\n", val);
+        }
     } else {
-        int val = parse_expr();
-        match(TOK_RPAREN);
-        match(TOK_SEMI);
-        printf("%d\n", val);
+        fprintf(stderr,
+                "Error de sintaxis en Imprimir: se esperaba '(' o '{' pero vino '%s'.\n",
+                tokens[cur_token].lexeme);
+        exit(1);
     }
 }
 
