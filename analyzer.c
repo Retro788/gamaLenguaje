@@ -20,6 +20,7 @@
  *
  *   <stmt>           ::= <decl_stmt>
  *                     | <print_stmt>
+ *                     | <sum_stmt>
  *                     | <read_stmt>
  *                     | <assign_stmt>
  *                     | <if_stmt>
@@ -31,7 +32,8 @@
  *   <var_list>       ::= <var_decl> ( ',' <var_decl> )*
  *   <var_decl>       ::= IDENT [ '=' <expr> ]
  *
- *   <print_stmt>     ::= 'Imprimir' '(' <expr> ')' ';'
+ *   <print_stmt>     ::= 'Imprimir' '(' ( <expr> | STRING ) ')' ';'
+ *   <sum_stmt>       ::= 'Suma' <expr> ';'
  *   <read_stmt>      ::= 'Leer' '(' IDENT ')' ';'
  *
  *   <assign_stmt>    ::= IDENT '=' <expr> ';'
@@ -117,20 +119,22 @@
  /*--------------------------------------------------------------
   * Enumeración de tokens (TOK_XXX) 
   *-------------------------------------------------------------*/
- typedef enum {
-     // palabras reservadas
-     TOK_INT,       // “Entero”
-     TOK_CHAR,      // “Caracter”
-     TOK_FLOAT,     // “Flotante”
-     TOK_PRINT,     // “Imprimir”
-     TOK_READ,      // “Leer”
-     TOK_IF,        // “Si”
-     TOK_ELSE,      // “Sino”
-     TOK_WHILE,     // “Mientras”
+typedef enum {
+    // palabras reservadas
+    TOK_INT,       // “Entero”
+    TOK_CHAR,      // “Caracter”
+    TOK_FLOAT,     // “Flotante”
+    TOK_PRINT,     // “Imprimir”
+    TOK_READ,      // “Leer”
+    TOK_IF,        // “Si”
+    TOK_ELSE,      // “Sino”
+    TOK_WHILE,     // “Mientras”
+    TOK_SUM,       // “Suma”
  
-     // identificador y número
-     TOK_IDENT,     // identificador: letra( letra|dígito )*
-     TOK_NUM,       // número: dígito+
+    // identificador y número y texto
+    TOK_IDENT,     // identificador: letra( letra|dígito )*
+    TOK_NUM,       // número: dígito+
+    TOK_STRING,    // cadena entre comillas
  
      // operadores y símbolos
      TOK_COMMA,     // ‘,’
@@ -160,10 +164,11 @@
  /*--------------------------------------------------------------
   * Un token consta de su tipo y su lexema (texto). 
   *-------------------------------------------------------------*/
- typedef struct {
-     TokenType type;
-     char      lexeme[MAX_LEXEME_LEN];
- } Token;
+typedef struct {
+    TokenType type;
+    char      lexeme[MAX_LEXEME_LEN];
+    int       line;
+} Token;
  
  /*--------------------------------------------------------------
   * Vector global de tokens (producidos por el lexer) y 
@@ -173,9 +178,11 @@
   *   num_tokens = # real de tokens
   *   cur_token  = índice del token “actual” para el parser
   *-------------------------------------------------------------*/
- static Token tokens[MAX_TOKENS];
- static int   num_tokens = 0;
- static int   cur_token  = 0;
+static Token tokens[MAX_TOKENS];
+static int   num_tokens = 0;
+static int   cur_token  = 0;
+static FILE *input_fp = NULL;
+static int   current_line = 1;
  
  
  /*==============================================================
@@ -262,35 +269,40 @@
   * next_char():
   *   Lee un carácter de stdin (getchar). Devuelve EOF si ya no hay nada.
   */
- static int next_char(void) {
-     int c = getchar();
-     return (c == EOF ? EOF : c);
- }
+static int next_char(void) {
+    int c = fgetc(input_fp);
+    if (c == '\n')
+        current_line++;
+    return (c == EOF ? EOF : c);
+}
  
  /**
   * unget_char(c):
   *   “Devuelve” c al flujo de entrada, para que next_char lo lea de nuevo.
   */
- static void unget_char(int c) {
-     if (c != EOF) {
-         ungetc(c, stdin);
-     }
- }
+static void unget_char(int c) {
+    if (c != EOF) {
+        if (c == '\n')
+            current_line--;
+        ungetc(c, input_fp);
+    }
+}
  
  /**
   * add_token(type, lexe):
   *   Agrega al arreglo “tokens” un nuevo token con tipo “type” y texto “lexe”.
   */
- static void add_token(TokenType type, const char *lexe) {
-     if (num_tokens >= MAX_TOKENS) {
-         fprintf(stderr, "Error: demasiados tokens (>= %d).\n", MAX_TOKENS);
-         exit(1);
-     }
-     tokens[num_tokens].type = type;
-     strncpy(tokens[num_tokens].lexeme, lexe, MAX_LEXEME_LEN - 1);
-     tokens[num_tokens].lexeme[MAX_LEXEME_LEN - 1] = '\0';
-     num_tokens++;
- }
+static void add_token(TokenType type, const char *lexe) {
+    if (num_tokens >= MAX_TOKENS) {
+        fprintf(stderr, "Error: demasiados tokens (>= %d).\n", MAX_TOKENS);
+        exit(1);
+    }
+    tokens[num_tokens].type = type;
+    strncpy(tokens[num_tokens].lexeme, lexe, MAX_LEXEME_LEN - 1);
+    tokens[num_tokens].lexeme[MAX_LEXEME_LEN - 1] = '\0';
+    tokens[num_tokens].line = current_line;
+    num_tokens++;
+}
  
  /**
   * yylex():
@@ -351,14 +363,18 @@
              add_token(TOK_FLOAT, buffer);
              return TOK_FLOAT;
          }
-         if (strcmp(tmp, "imprimir") == 0) {
-             add_token(TOK_PRINT, buffer);
-             return TOK_PRINT;
-         }
-         if (strcmp(tmp, "leer") == 0) {
-             add_token(TOK_READ, buffer);
-             return TOK_READ;
-         }
+        if (strcmp(tmp, "imprimir") == 0) {
+            add_token(TOK_PRINT, buffer);
+            return TOK_PRINT;
+        }
+        if (strcmp(tmp, "leer") == 0) {
+            add_token(TOK_READ, buffer);
+            return TOK_READ;
+        }
+        if (strcmp(tmp, "suma") == 0) {
+            add_token(TOK_SUM, buffer);
+            return TOK_SUM;
+        }
          if (strcmp(tmp, "si") == 0) {
              add_token(TOK_IF, buffer);
              return TOK_IF;
@@ -376,12 +392,31 @@
          return TOK_IDENT;
      }
  
-     // 3) Si comienza con dígito → NUM
-     if (isdigit(c)) {
-         len = 0;
-         do {
-             if (len < MAX_LEXEME_LEN - 1) {
-                 buffer[len++] = (char)c;
+    // 3) Cadena entre comillas
+    if (c == '"') {
+        len = 0;
+        c = next_char();
+        while (c != '"' && c != EOF && c != '\n') {
+            if (len < MAX_LEXEME_LEN - 1) {
+                buffer[len++] = (char)c;
+            }
+            c = next_char();
+        }
+        buffer[len] = '\0';
+        if (c != '"') {
+            fprintf(stderr, "Error: cadena sin cerrar en linea %d.\n", current_line);
+            exit(1);
+        }
+        add_token(TOK_STRING, buffer);
+        return TOK_STRING;
+    }
+
+    // 4) Si comienza con dígito → NUM
+    if (isdigit(c)) {
+        len = 0;
+        do {
+            if (len < MAX_LEXEME_LEN - 1) {
+                buffer[len++] = (char)c;
              }
              c = next_char();
          } while (isdigit(c));
@@ -392,7 +427,7 @@
          return TOK_NUM;
      }
  
-     // 4) Reconocer operadores relacionales de dos caracteres:
+    // 5) Reconocer operadores relacionales de dos caracteres:
      if (c == '=') {
          int next = next_char();
          if (next == '=') {
@@ -766,13 +801,14 @@
  /*
   * Prototipos recursivos:
   */
- static void parse_stmt(void);
- static void parse_print_stmt(void);
- static void parse_read_stmt(void);
- static void parse_assign_stmt(void);
- static void parse_if_stmt(void);
- static void parse_while_stmt(void);
- static void parse_block_stmt(void);
+static void parse_stmt(void);
+static void parse_print_stmt(void);
+static void parse_read_stmt(void);
+static void parse_assign_stmt(void);
+static void parse_if_stmt(void);
+static void parse_while_stmt(void);
+static void parse_block_stmt(void);
+static void parse_sum_stmt(void);
  
  /*
   * <stmt> ::= <decl_stmt>
@@ -791,9 +827,13 @@
              parse_decl_stmt();
              break;
  
-         case TOK_PRINT:
-             parse_print_stmt();
-             break;
+        case TOK_PRINT:
+            parse_print_stmt();
+            break;
+
+        case TOK_SUM:
+            parse_sum_stmt();
+            break;
  
          case TOK_READ:
              parse_read_stmt();
@@ -824,17 +864,60 @@
  }
  
  /*
-  * <print_stmt> ::= 'Imprimir' '(' <expr> ')' ';'
-  * Semántica: evalúa <expr> y muestra su valor por stdout (seguido de newline).
-  */
- static void parse_print_stmt(void) {
-     match(TOK_PRINT);
-     match(TOK_LPAREN);
-     int val = parse_expr();
-     match(TOK_RPAREN);
-     match(TOK_SEMI);
-     printf("%d\n", val);
- }
+ * <print_stmt> ::=
+ *       'Imprimir' '(' ( <expr> | STRING ) ')' ';'
+ *     | 'Imprimir' '{' ( <expr> | STRING ) '}' ';'
+ * Semántica: evalúa la expresión (o imprime la cadena) y muestra el
+ * resultado por stdout seguido de un salto de línea.
+ */
+static void parse_print_stmt(void) {
+    match(TOK_PRINT);
+    if (lookahead() == TOK_LPAREN) {
+        match(TOK_LPAREN);
+        if (lookahead() == TOK_STRING) {
+            char *s = tokens[cur_token].lexeme;
+            cur_token++;
+            match(TOK_RPAREN);
+            match(TOK_SEMI);
+            printf("%s\n", s);
+        } else {
+            int val = parse_expr();
+            match(TOK_RPAREN);
+            match(TOK_SEMI);
+            printf("%d\n", val);
+        }
+    } else if (lookahead() == TOK_LBRACE) {
+        match(TOK_LBRACE);
+        if (lookahead() == TOK_STRING) {
+            char *s = tokens[cur_token].lexeme;
+            cur_token++;
+            match(TOK_RBRACE);
+            match(TOK_SEMI);
+            printf("%s\n", s);
+        } else {
+            int val = parse_expr();
+            match(TOK_RBRACE);
+            match(TOK_SEMI);
+            printf("%d\n", val);
+        }
+    } else {
+        fprintf(stderr,
+                "Error de sintaxis en Imprimir: se esperaba '(' o '{' pero vino '%s'.\n",
+                tokens[cur_token].lexeme);
+        exit(1);
+    }
+}
+
+/*
+ * <sum_stmt> ::= 'Suma' <expr> ';'
+ * Muestra el resultado de la expresión.
+ */
+static void parse_sum_stmt(void) {
+    match(TOK_SUM);
+    int val = parse_expr();
+    match(TOK_SEMI);
+    printf("%d\n", val);
+}
  
  /*
   * <read_stmt> ::= 'Leer' '(' IDENT ')' ';'
@@ -1202,16 +1285,48 @@
   *                          MAIN
   *=============================================================*/
  
- int main(void) {
-     // 1) Tokenizar toda la entrada (en CMD, pulsa Ctrl+Z ⏎ para EOF)
-     tokenize_input();
- 
-     // 2) Iniciar el parser
-     cur_token = 0;
-     parse_program();
- 
-     // 3) Si no hubo error, imprimimos OK
-     printf("OK\n");
-     return 0;
- }
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "Uso: %s <archivo.cpp> [tokens.obj]\n", argv[0]);
+        return 1;
+    }
+
+    input_fp = fopen(argv[1], "r");
+    if (!input_fp) {
+        perror("fopen");
+        return 1;
+    }
+
+    // 1) Tokenizar toda la entrada
+    tokenize_input();
+
+    // Guardar tokens si se indicó archivo .obj
+    if (argc >= 3) {
+        FILE *out = fopen(argv[2], "w");
+        if (!out) {
+            perror("fopen");
+            return 1;
+        }
+        for (int i = 0; i < num_tokens; i++) {
+            fprintf(out, "%d:\t%d\t%s\n", tokens[i].line, tokens[i].type, tokens[i].lexeme);
+        }
+        fclose(out);
+    }
+
+    // Reiniciar posición para el parser
+    rewind(input_fp);
+    num_tokens = 0;
+    cur_token = 0;
+    current_line = 1;
+    tokenize_input();
+
+    // 2) Iniciar el parser
+    cur_token = 0;
+    parse_program();
+
+    // 3) Si no hubo error, imprimimos OK
+    printf("OK\n");
+    fclose(input_fp);
+    return 0;
+}
  
