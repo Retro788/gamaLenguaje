@@ -12,11 +12,13 @@
                      | <bloque>
 
 <declaracion>     ::= <tipo> <lista_variables> ';'
-<tipo>            ::= 'Entero' | 'Caracter' | 'Flotante'
+<tipo>            ::= 'Entero' | 'Caracter' | 'Flotante' | 'var' | 'const' | 'items' | 'item'
 <lista_variables> ::= <decl_var> ( ',' <decl_var> )*
 <decl_var>        ::= IDENT [ '=' <expresion> ]
 
 <imprimir>        ::= 'Imprimir' '(' <expresion> ')' ';'
+                   | 'Imprimir' '(' CADENA ')' ';'
+                   | 'Imprimir' '{' CADENA '}' ';'
 <leer>            ::= 'Leer' '(' IDENT ')' ';'
 
 <asignacion>      ::= IDENT '=' <expresion> ';'
@@ -30,18 +32,27 @@
 
 <exp_relacional>  ::= <exp_suma> ( ( '==' | '!=' | '<' | '>' | '<=' | '>=' ) <exp_suma> )*
 <exp_suma>        ::= <exp_mul> ( ( '+' | '-' ) <exp_mul> )*
-<exp_mul>         ::= <exp_unaria> ( ( '*' | '/' ) <exp_unaria> )*
+<exp_mul>         ::= <exp_pot> ( ( '*' | '/' | '%' ) <exp_pot> )*
+<exp_pot>         ::= <exp_unaria> ( '^' <exp_unaria> )*
 <exp_unaria>      ::= [ '-' ] <primaria>
-<primaria>        ::= '(' <expresion> ')' 
-                     | NUM 
+<primaria>        ::= '(' <expresion> ')'
+                     | NUM
                      | IDENT
+                     | CADENA
 
 // Tokens léxicos (definiciones de “átomos”):
 IDENT            ::= (Letra) (Letra | Dígito)*
 NUM              ::= (Dígito)+
+CADENA           ::= '"' (cualquier caracter sin '"')* '"'
+Letra           ::= 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' |
+                    'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't' |
+                    'u' | 'v' | 'w' | 'x' | 'y' | 'z' |
+                    'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' |
+                    'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' |
+                    'U' | 'V' | 'W' | 'X' | 'Y' | 'Z'
 
 // Palabras reservadas:
-'Entero', 'Caracter', 'Flotante', 'Imprimir', 'Leer', 'Si', 'Sino', 'Mientras'
+'Entero', 'Caracter', 'Flotante', 'Imprimir', 'Leer', 'Si', 'Sino', 'Mientras', 'var', 'const', 'items', 'item'
 
 // Símbolos simples:
 ','   → TOK_COMMA
@@ -64,6 +75,10 @@ NUM              ::= (Dígito)+
 '-'   → TOK_MINUS
 '*'   → TOK_MULT
 '/'   → TOK_DIV
+'%'   → TOK_MOD
+'^'   → TOK_POW
+
+CADENA         → TOK_STRING
 
 EOF              → TOK_EOF
 Cualquier otro carácter no reconocido → TOK_UNKNOWN
