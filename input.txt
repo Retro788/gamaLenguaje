@@ -1,8 +1,13 @@
 Entero a = 5, b, c = 2;
+Entero dia = 4;
+Imprimir{"hola mundo"};
+Imprimir("queso");
 Imprimir(a + c);
 b = a * c + 1;
+Imprimir(5 % 2);
+Imprimir(2 ^ 3);
+Imprimir{dia};
 Imprimir(b);
-Leer(b);
 Si (b > 0) {
     Imprimir(b);
 } Sino {
@@ -14,5 +19,3 @@ Mientras (i > 0) {
     Imprimir(i);
     i = i - 1;
 }
-
-42
