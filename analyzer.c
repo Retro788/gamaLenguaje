@@ -71,9 +71,10 @@
  *      gcc -Wall -o analyzer analyzer.c
  *
  *   4) Ejecuta:
- *      analyzer.exe
- *      (Pega tu programa línea a línea y pulsa Ctrl+Z ⏎ cuando acabes.
- *       Cuando salga “Leer(x);” teclea el número y pulsa Enter.)
+ *      analyzer.exe [archivo.txt]
+ *      Si no especificas archivo, escribe tu programa en la consola
+ *      y pulsa Ctrl+Z ⏎ al terminar. También puedes pasar el
+ *      archivo por redirección con "analyzer.exe < archivo.txt".
  *
  * Si todo es correcto, el intérprete leerá tu input (línea por línea)
  * e imprimirá los resultados correspondientes.  
@@ -327,20 +328,22 @@ static void write_tokens_to_obj(const char *filename) {
   * next_char():
   *   Lee un carácter de stdin (getchar). Devuelve EOF si ya no hay nada.
   */
- static int next_char(void) {
-     int c = getchar();
-     return (c == EOF ? EOF : c);
- }
+static FILE *input_stream = NULL;
+
+static int next_char(void) {
+    int c = fgetc(input_stream);
+    return (c == EOF ? EOF : c);
+}
  
  /**
   * unget_char(c):
   *   “Devuelve” c al flujo de entrada, para que next_char lo lea de nuevo.
   */
- static void unget_char(int c) {
-     if (c != EOF) {
-         ungetc(c, stdin);
-     }
- }
+static void unget_char(int c) {
+    if (c != EOF) {
+        ungetc(c, input_stream);
+    }
+}
  
  /**
   * add_token(type, lexe):
@@ -1313,7 +1316,16 @@ static int parse_mul_expr(void) {
   *                          MAIN
   *=============================================================*/
  
-int main(void) {
+int main(int argc, char *argv[]) {
+    input_stream = stdin;
+    if (argc > 1) {
+        input_stream = fopen(argv[1], "r");
+        if (!input_stream) {
+            perror("fopen");
+            return 1;
+        }
+    }
+
     // 1) Tokenizar toda la entrada (en CMD, pulsa Ctrl+Z ⏎ para EOF)
     tokenize_input();
 
@@ -1321,11 +1333,14 @@ int main(void) {
     write_tokens_to_obj("lexico.obj");
  
      // 2) Iniciar el parser
-     cur_token = 0;
-     parse_program();
- 
-     // 3) Si no hubo error, imprimimos OK
-     printf("OK\n");
-     return 0;
- }
+    cur_token = 0;
+    parse_program();
+
+    // 3) Si no hubo error, imprimimos OK
+    printf("OK\n");
+    if (input_stream != stdin) {
+        fclose(input_stream);
+    }
+    return 0;
+}
  
