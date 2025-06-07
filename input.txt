@@ -1,8 +1,10 @@
 Entero a = 5, b, c = 2;
+Imprimir{"hola mundo"};
 Imprimir(a + c);
 b = a * c + 1;
+Imprimir(5 % 2);
+Imprimir(2 ^ 3);
 Imprimir(b);
-Leer(b);
 Si (b > 0) {
     Imprimir(b);
 } Sino {
@@ -14,5 +16,3 @@ Mientras (i > 0) {
     Imprimir(i);
     i = i - 1;
 }
-
-42
