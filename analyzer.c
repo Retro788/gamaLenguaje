@@ -257,6 +257,68 @@ static void append_exec_output(const char *text) {
 /*--------------------------------------------------------------
  * Escribir los tokens en un archivo .obj
  *-------------------------------------------------------------*/
+/* helper predicates for token categorization */
+static int is_reserved(TokenType t) {
+    switch (t) {
+        case TOK_INT: case TOK_CHAR: case TOK_FLOAT:
+        case TOK_PRINT: case TOK_READ: case TOK_IF:
+        case TOK_ELSE: case TOK_WHILE:
+        case TOK_VAR: case TOK_CONST: case TOK_ITEMS: case TOK_ITEM:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static int is_symbol(TokenType t) {
+    return (t == TOK_COMMA || t == TOK_SEMI || t == TOK_LPAREN ||
+            t == TOK_RPAREN || t == TOK_LBRACE || t == TOK_RBRACE);
+}
+
+static int is_operator(TokenType t) {
+    switch (t) {
+        case TOK_PLUS: case TOK_MINUS: case TOK_MULT: case TOK_DIV:
+        case TOK_MOD:  case TOK_POW:   case TOK_ASSIGN:
+        case TOK_EQ:   case TOK_NEQ:   case TOK_LT: case TOK_LE:
+        case TOK_GT:   case TOK_GE:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static void write_lexical_sections(FILE *f) {
+    fprintf(f, "-- Palabras reservadas --\n");
+    for (int i = 0; i < num_tokens; i++)
+        if (is_reserved(tokens[i].type))
+            fprintf(f, "%s\t%s\n", token_name(tokens[i].type), tokens[i].lexeme);
+
+    fprintf(f, "\n-- Identificadores --\n");
+    for (int i = 0; i < num_tokens; i++)
+        if (tokens[i].type == TOK_IDENT)
+            fprintf(f, "%s\t%s\n", token_name(tokens[i].type), tokens[i].lexeme);
+
+    fprintf(f, "\n-- Numeros --\n");
+    for (int i = 0; i < num_tokens; i++)
+        if (tokens[i].type == TOK_NUM)
+            fprintf(f, "%s\t%s\n", token_name(tokens[i].type), tokens[i].lexeme);
+
+    fprintf(f, "\n-- Cadenas --\n");
+    for (int i = 0; i < num_tokens; i++)
+        if (tokens[i].type == TOK_STRING)
+            fprintf(f, "%s\t%s\n", token_name(tokens[i].type), tokens[i].lexeme);
+
+    fprintf(f, "\n-- Operadores --\n");
+    for (int i = 0; i < num_tokens; i++)
+        if (is_operator(tokens[i].type))
+            fprintf(f, "%s\t%s\n", token_name(tokens[i].type), tokens[i].lexeme);
+
+    fprintf(f, "\n-- Simbolos --\n");
+    for (int i = 0; i < num_tokens; i++)
+        if (is_symbol(tokens[i].type))
+            fprintf(f, "%s\t%s\n", token_name(tokens[i].type), tokens[i].lexeme);
+}
+
 static void write_tokens_to_obj(const char *filename,
                                 const char *parse_result,
                                 const char *exec_output) {
@@ -270,9 +332,7 @@ static void write_tokens_to_obj(const char *filename,
     if (source_len == 0 || source_buffer[source_len-1] != '\n')
         fputc('\n', f);
     fprintf(f, "\n=== Lexer ===\n");
-    for (int i = 0; i < num_tokens; i++) {
-        fprintf(f, "%s\t%s\n", token_name(tokens[i].type), tokens[i].lexeme);
-    }
+    write_lexical_sections(f);
     fprintf(f, "\n=== Parser ===\n%s\n", parse_result);
     fprintf(f, "\n=== Ejecucion ===\n");
     fputs(exec_output, f);
