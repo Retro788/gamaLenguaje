@@ -53,7 +53,7 @@
  *   - NUM:   (Dígito)+
  *   - Palabras reservadas: Entero, Caracter, Flotante, Imprimir, Leer, Si, Sino, Mientras
  *   - Símbolos: ',' ';' '(' ')' '{' '}' 
- *   - Operadores: '+' '-' '*' '/'
+ *   - Operadores: '+' '-' '*' '/' '%' '^'
  *   - Relacionales: '==' '!=' '<' '>' '<=' '>='
  *   - Asignación: '='
  *   - EOF  → TOK_EOF
@@ -83,10 +83,11 @@
 
  #define _CRT_SECURE_NO_WARNINGS
 
- #include <stdio.h>
- #include <stdlib.h>
- #include <string.h>
- #include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <math.h>
  
  /*==============================================================
   *                       DEFINICIONES GLOBALES
@@ -154,8 +155,10 @@
  
      TOK_PLUS,      // ‘+’
      TOK_MINUS,     // ‘-’
-     TOK_MULT,      // ‘*’
-     TOK_DIV,       // ‘/’
+    TOK_MULT,      // ‘*’
+    TOK_DIV,       // ‘/’
+    TOK_MOD,       // '%'
+    TOK_POW,       // '^'
  
      TOK_EOF,       // fin de archivo 
      TOK_UNKNOWN    // cualquier otro
@@ -217,6 +220,8 @@ static const char *token_name(TokenType t) {
         case TOK_MINUS:  return "TOK_MINUS";
         case TOK_MULT:   return "TOK_MULT";
         case TOK_DIV:    return "TOK_DIV";
+        case TOK_MOD:    return "TOK_MOD";
+        case TOK_POW:    return "TOK_POW";
         case TOK_EOF:    return "TOK_EOF";
         default:         return "TOK_UNKNOWN";
     }
@@ -360,8 +365,8 @@ static void write_tokens_to_obj(const char *filename) {
   *    - Secuencia de dígitos             → NUM
   *    - “==”, “!=”, “<=”, “>=”            → TOK_EQ/TOK_NEQ/TOK_LE/TOK_GE
   *    - ‘<’, ‘>’, ‘=’ (asign.)           → TOK_LT/TOK_GT/TOK_ASSIGN
-  *    - Símbolos simples: ',', ';', '(', ')', '{', '}' 
-  *    - Operadores: '+', '-', '*', '/'
+ *    - Símbolos simples: ',', ';', '(', ')', '{', '}'
+ *    - Operadores: '+', '-', '*', '/', '%', '^'
   *    - EOF → TOK_EOF
   *    - Cualquier otro → TOK_UNKNOWN
   */
@@ -395,7 +400,7 @@ static TokenType yylex(void) {
     if (c == ',' || c == ';' || c == '(' || c == ')' || c == '{' || c == '}')
         return lex_symbol(c);
 
-    if (c == '+' || c == '-' || c == '*' || c == '/')
+    if (c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '^')
         return lex_operator(c);
 
     /* Cualquier otro carácter → TOK_UNKNOWN */
@@ -557,6 +562,8 @@ static TokenType lex_operator(int first) {
         case '-': add_token(TOK_MINUS, "-"); return TOK_MINUS;
         case '*': add_token(TOK_MULT, "*"); return TOK_MULT;
         case '/': add_token(TOK_DIV, "/"); return TOK_DIV;
+        case '%': add_token(TOK_MOD, "%"); return TOK_MOD;
+        case '^': add_token(TOK_POW, "^"); return TOK_POW;
     }
     char buf[2] = { (char)first, '\0' };
     add_token(TOK_UNKNOWN, buf);
@@ -646,7 +653,8 @@ static TokenType lex_operator(int first) {
  static int parse_expr(void);
  static int parse_rel_expr(void);
  static int parse_add_expr(void);
- static int parse_mul_expr(void);
+static int parse_mul_expr(void);
+static int parse_pow_expr(void);
  static int parse_unary_expr(void);
  static int parse_primary(void);
  
@@ -712,29 +720,47 @@ static TokenType lex_operator(int first) {
  /*
   * <mul_expr> ::= <unary_expr> { ( '*' | '/' ) <unary_expr> }
   */
- static int parse_mul_expr(void) {
-     int left = parse_unary_expr();
- 
-     while (1) {
-         TokenType t = lookahead();
-         if (t == TOK_MULT || t == TOK_DIV) {
-             cur_token++;
-             int right = parse_unary_expr();
-             if (t == TOK_MULT) {
-                 left = left * right;
-             } else {
-                 if (right == 0) {
-                     fprintf(stderr, "Error: división por cero.\n");
-                     exit(1);
-                 }
-                 left = left / right;
-             }
-         } else {
-             break;
-         }
-     }
-     return left;
- }
+static int parse_pow_expr(void) {
+    int left = parse_unary_expr();
+
+    while (lookahead() == TOK_POW) {
+        match(TOK_POW);
+        int right = parse_unary_expr();
+        left = (int)pow(left, right);
+    }
+
+    return left;
+}
+
+static int parse_mul_expr(void) {
+    int left = parse_pow_expr();
+
+    while (1) {
+        TokenType t = lookahead();
+        if (t == TOK_MULT || t == TOK_DIV || t == TOK_MOD) {
+            cur_token++;
+            int right = parse_pow_expr();
+            if (t == TOK_MULT) {
+                left = left * right;
+            } else if (t == TOK_DIV) {
+                if (right == 0) {
+                    fprintf(stderr, "Error: división por cero.\n");
+                    exit(1);
+                }
+                left = left / right;
+            } else {
+                if (right == 0) {
+                    fprintf(stderr, "Error: módulo por cero.\n");
+                    exit(1);
+                }
+                left = left % right;
+            }
+        } else {
+            break;
+        }
+    }
+    return left;
+}
  
  /*
   * <unary_expr> ::= [ '-' ] <primary>

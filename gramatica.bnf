@@ -30,7 +30,8 @@
 
 <exp_relacional>  ::= <exp_suma> ( ( '==' | '!=' | '<' | '>' | '<=' | '>=' ) <exp_suma> )*
 <exp_suma>        ::= <exp_mul> ( ( '+' | '-' ) <exp_mul> )*
-<exp_mul>         ::= <exp_unaria> ( ( '*' | '/' ) <exp_unaria> )*
+<exp_mul>         ::= <exp_pot> ( ( '*' | '/' | '%' ) <exp_pot> )*
+<exp_pot>         ::= <exp_unaria> ( '^' <exp_unaria> )*
 <exp_unaria>      ::= [ '-' ] <primaria>
 <primaria>        ::= '(' <expresion> ')' 
                      | NUM 
@@ -70,6 +71,8 @@ Letra           ::= 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' |
 '-'   → TOK_MINUS
 '*'   → TOK_MULT
 '/'   → TOK_DIV
+'%'   → TOK_MOD
+'^'   → TOK_POW
 
 EOF              → TOK_EOF
 Cualquier otro carácter no reconocido → TOK_UNKNOWN
