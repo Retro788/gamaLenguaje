@@ -53,7 +53,7 @@
  *   - NUM:   (Dígito)+
  *   - Palabras reservadas: Entero, Caracter, Flotante, Imprimir, Leer, Si, Sino, Mientras
  *   - Símbolos: ',' ';' '(' ')' '{' '}' 
- *   - Operadores: '+' '-' '*' '/'
+ *   - Operadores: '+' '-' '*' '/' '%' '^'
  *   - Relacionales: '==' '!=' '<' '>' '<=' '>='
  *   - Asignación: '='
  *   - EOF  → TOK_EOF
@@ -71,9 +71,10 @@
  *      gcc -Wall -o analyzer analyzer.c
  *
  *   4) Ejecuta:
- *      analyzer.exe
- *      (Pega tu programa línea a línea y pulsa Ctrl+Z ⏎ cuando acabes.
- *       Cuando salga “Leer(x);” teclea el número y pulsa Enter.)
+ *      analyzer.exe [archivo.txt]
+ *      Si no especificas archivo, escribe tu programa en la consola
+ *      y pulsa Ctrl+Z ⏎ al terminar. También puedes pasar el
+ *      archivo por redirección con "analyzer.exe < archivo.txt".
  *
  * Si todo es correcto, el intérprete leerá tu input (línea por línea)
  * e imprimirá los resultados correspondientes.  
@@ -83,10 +84,11 @@
 
  #define _CRT_SECURE_NO_WARNINGS
 
- #include <stdio.h>
- #include <stdlib.h>
- #include <string.h>
- #include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <math.h>
  
  /*==============================================================
   *                       DEFINICIONES GLOBALES
@@ -122,15 +124,20 @@
      TOK_INT,       // “Entero”
      TOK_CHAR,      // “Caracter”
      TOK_FLOAT,     // “Flotante”
-     TOK_PRINT,     // “Imprimir”
-     TOK_READ,      // “Leer”
-     TOK_IF,        // “Si”
-     TOK_ELSE,      // “Sino”
-     TOK_WHILE,     // “Mientras”
+    TOK_PRINT,     // “Imprimir”
+    TOK_READ,      // “Leer”
+    TOK_IF,        // “Si”
+    TOK_ELSE,      // “Sino”
+    TOK_WHILE,     // “Mientras”
+    TOK_VAR,       // "var"
+    TOK_CONST,     // "const"
+    TOK_ITEMS,     // "items"
+    TOK_ITEM,      // "item"
  
      // identificador y número
-     TOK_IDENT,     // identificador: letra( letra|dígito )*
-     TOK_NUM,       // número: dígito+
+    TOK_IDENT,     // identificador: letra( letra|dígito )*
+    TOK_NUM,       // número: dígito+
+    TOK_STRING,    // cadena entre comillas
  
      // operadores y símbolos
      TOK_COMMA,     // ‘,’
@@ -150,8 +157,10 @@
  
      TOK_PLUS,      // ‘+’
      TOK_MINUS,     // ‘-’
-     TOK_MULT,      // ‘*’
-     TOK_DIV,       // ‘/’
+    TOK_MULT,      // ‘*’
+    TOK_DIV,       // ‘/’
+    TOK_MOD,       // '%'
+    TOK_POW,       // '^'
  
      TOK_EOF,       // fin de archivo 
      TOK_UNKNOWN    // cualquier otro
@@ -175,7 +184,66 @@
   *-------------------------------------------------------------*/
  static Token tokens[MAX_TOKENS];
  static int   num_tokens = 0;
- static int   cur_token  = 0;
+static int   cur_token  = 0;
+
+/*--------------------------------------------------------------
+ * Nombre textual de cada token (para depuración y .obj)
+ *-------------------------------------------------------------*/
+static const char *token_name(TokenType t) {
+    switch (t) {
+        case TOK_INT:    return "TOK_INT";
+        case TOK_CHAR:   return "TOK_CHAR";
+        case TOK_FLOAT:  return "TOK_FLOAT";
+        case TOK_PRINT:  return "TOK_PRINT";
+        case TOK_READ:   return "TOK_READ";
+        case TOK_IF:     return "TOK_IF";
+        case TOK_ELSE:   return "TOK_ELSE";
+        case TOK_WHILE:  return "TOK_WHILE";
+        case TOK_VAR:    return "TOK_VAR";
+        case TOK_CONST:  return "TOK_CONST";
+        case TOK_ITEMS:  return "TOK_ITEMS";
+        case TOK_ITEM:   return "TOK_ITEM";
+        case TOK_IDENT:  return "TOK_IDENT";
+        case TOK_NUM:    return "TOK_NUM";
+        case TOK_STRING: return "TOK_STRING";
+        case TOK_COMMA:  return "TOK_COMMA";
+        case TOK_SEMI:   return "TOK_SEMI";
+        case TOK_LPAREN: return "TOK_LPAREN";
+        case TOK_RPAREN: return "TOK_RPAREN";
+        case TOK_LBRACE: return "TOK_LBRACE";
+        case TOK_RBRACE: return "TOK_RBRACE";
+        case TOK_ASSIGN: return "TOK_ASSIGN";
+        case TOK_EQ:     return "TOK_EQ";
+        case TOK_NEQ:    return "TOK_NEQ";
+        case TOK_LT:     return "TOK_LT";
+        case TOK_LE:     return "TOK_LE";
+        case TOK_GT:     return "TOK_GT";
+        case TOK_GE:     return "TOK_GE";
+        case TOK_PLUS:   return "TOK_PLUS";
+        case TOK_MINUS:  return "TOK_MINUS";
+        case TOK_MULT:   return "TOK_MULT";
+        case TOK_DIV:    return "TOK_DIV";
+        case TOK_MOD:    return "TOK_MOD";
+        case TOK_POW:    return "TOK_POW";
+        case TOK_EOF:    return "TOK_EOF";
+        default:         return "TOK_UNKNOWN";
+    }
+}
+
+/*--------------------------------------------------------------
+ * Escribir los tokens en un archivo .obj
+ *-------------------------------------------------------------*/
+static void write_tokens_to_obj(const char *filename) {
+    FILE *f = fopen(filename, "w");
+    if (!f) {
+        perror("fopen");
+        exit(1);
+    }
+    for (int i = 0; i < num_tokens; i++) {
+        fprintf(f, "%s\t%s\n", token_name(tokens[i].type), tokens[i].lexeme);
+    }
+    fclose(f);
+}
  
  
  /*==============================================================
@@ -262,20 +330,22 @@
   * next_char():
   *   Lee un carácter de stdin (getchar). Devuelve EOF si ya no hay nada.
   */
- static int next_char(void) {
-     int c = getchar();
-     return (c == EOF ? EOF : c);
- }
+static FILE *input_stream = NULL;
+
+static int next_char(void) {
+    int c = fgetc(input_stream);
+    return (c == EOF ? EOF : c);
+}
  
  /**
   * unget_char(c):
   *   “Devuelve” c al flujo de entrada, para que next_char lo lea de nuevo.
   */
- static void unget_char(int c) {
-     if (c != EOF) {
-         ungetc(c, stdin);
-     }
- }
+static void unget_char(int c) {
+    if (c != EOF) {
+        ungetc(c, input_stream);
+    }
+}
  
  /**
   * add_token(type, lexe):
@@ -300,184 +370,231 @@
   *    - Secuencia de dígitos             → NUM
   *    - “==”, “!=”, “<=”, “>=”            → TOK_EQ/TOK_NEQ/TOK_LE/TOK_GE
   *    - ‘<’, ‘>’, ‘=’ (asign.)           → TOK_LT/TOK_GT/TOK_ASSIGN
-  *    - Símbolos simples: ',', ';', '(', ')', '{', '}' 
-  *    - Operadores: '+', '-', '*', '/'
+ *    - Símbolos simples: ',', ';', '(', ')', '{', '}'
+ *    - Operadores: '+', '-', '*', '/', '%', '^'
   *    - EOF → TOK_EOF
   *    - Cualquier otro → TOK_UNKNOWN
   */
- static TokenType yylex(void) {
-     int c;
-     char buffer[MAX_LEXEME_LEN];
-     int len;
- 
-     // 1) Saltar espacios en blanco y newline
-     do {
-         c = next_char();
-     } while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
- 
-     if (c == EOF) {
-         return TOK_EOF;
-     }
- 
-     // 2) Si comienza con letra → identificador o palabra reservada
-     if (isalpha(c)) {
-         len = 0;
-         do {
-             if (len < MAX_LEXEME_LEN - 1) {
-                 buffer[len++] = (char)c;
-             }
-             c = next_char();
-         } while (isalpha(c) || isdigit(c));
-         buffer[len] = '\0';
-         unget_char(c);
- 
-         // Creamos una copia en minúsculas para comparar sin distinción de mayúsculas/minúsculas
-         char tmp[MAX_LEXEME_LEN];
-         for (int i = 0; buffer[i]; i++) {
-             tmp[i] = tolower((unsigned char)buffer[i]);
-         }
-         tmp[len] = '\0';
- 
-         // Verificamos si es una palabra reservada en español
-         if (strcmp(tmp, "entero") == 0) {
-             add_token(TOK_INT, buffer);
-             return TOK_INT;
-         }
-         if (strcmp(tmp, "caracter") == 0) {
-             add_token(TOK_CHAR, buffer);
-             return TOK_CHAR;
-         }
-         if (strcmp(tmp, "flotante") == 0) {
-             add_token(TOK_FLOAT, buffer);
-             return TOK_FLOAT;
-         }
-         if (strcmp(tmp, "imprimir") == 0) {
-             add_token(TOK_PRINT, buffer);
-             return TOK_PRINT;
-         }
-         if (strcmp(tmp, "leer") == 0) {
-             add_token(TOK_READ, buffer);
-             return TOK_READ;
-         }
-         if (strcmp(tmp, "si") == 0) {
-             add_token(TOK_IF, buffer);
-             return TOK_IF;
-         }
-         if (strcmp(tmp, "sino") == 0) {
-             add_token(TOK_ELSE, buffer);
-             return TOK_ELSE;
-         }
-         if (strcmp(tmp, "mientras") == 0) {
-             add_token(TOK_WHILE, buffer);
-             return TOK_WHILE;
-         }
-         // Si no es palabra reservada, es un IDENT
-         add_token(TOK_IDENT, buffer);
-         return TOK_IDENT;
-     }
- 
-     // 3) Si comienza con dígito → NUM
-     if (isdigit(c)) {
-         len = 0;
-         do {
-             if (len < MAX_LEXEME_LEN - 1) {
-                 buffer[len++] = (char)c;
-             }
-             c = next_char();
-         } while (isdigit(c));
-         buffer[len] = '\0';
-         unget_char(c);
- 
-         add_token(TOK_NUM, buffer);
-         return TOK_NUM;
-     }
- 
-     // 4) Reconocer operadores relacionales de dos caracteres:
-     if (c == '=') {
-         int next = next_char();
-         if (next == '=') {
-             add_token(TOK_EQ, "==");
-             return TOK_EQ;
-         } else {
-             unget_char(next);
-             add_token(TOK_ASSIGN, "=");
-             return TOK_ASSIGN;
-         }
-     }
-     if (c == '!') {
-         int next = next_char();
-         if (next == '=') {
-             add_token(TOK_NEQ, "!=");
-             return TOK_NEQ;
-         } else {
-             unget_char(next);
-             add_token(TOK_UNKNOWN, "!");
-             return TOK_UNKNOWN;
-         }
-     }
-     if (c == '<') {
-         int next = next_char();
-         if (next == '=') {
-             add_token(TOK_LE, "<=");
-             return TOK_LE;
-         } else {
-             unget_char(next);
-             add_token(TOK_LT, "<");
-             return TOK_LT;
-         }
-     }
-     if (c == '>') {
-         int next = next_char();
-         if (next == '=') {
-             add_token(TOK_GE, ">=");
-             return TOK_GE;
-         } else {
-             unget_char(next);
-             add_token(TOK_GT, ">");
-             return TOK_GT;
-         }
-     }
- 
-     // 5) Símbolos simples y operadores de un solo carácter
-     switch (c) {
-         case ',':
-             add_token(TOK_COMMA, ",");
-             return TOK_COMMA;
-         case ';':
-             add_token(TOK_SEMI, ";");
-             return TOK_SEMI;
-         case '(':
-             add_token(TOK_LPAREN, "(");
-             return TOK_LPAREN;
-         case ')':
-             add_token(TOK_RPAREN, ")");
-             return TOK_RPAREN;
-         case '{':
-             add_token(TOK_LBRACE, "{");
-             return TOK_LBRACE;
-         case '}':
-             add_token(TOK_RBRACE, "}");
-             return TOK_RBRACE;
-         case '+':
-             add_token(TOK_PLUS, "+");
-             return TOK_PLUS;
-         case '-':
-             add_token(TOK_MINUS, "-");
-             return TOK_MINUS;
-         case '*':
-             add_token(TOK_MULT, "*");
-             return TOK_MULT;
-         case '/':
-             add_token(TOK_DIV, "/");
-             return TOK_DIV;
-         default:
-             // Cualquier otro carácter → TOK_UNKNOWN
-             buffer[0] = (char)c;
-             buffer[1] = '\0';
-             add_token(TOK_UNKNOWN, buffer);
-             return TOK_UNKNOWN;
-     }
- }
+/* Prototipos de funciones de reconocimiento léxico */
+static TokenType lex_identifier_or_keyword(int first);
+static TokenType lex_number(int first);
+static TokenType lex_string(void);
+static TokenType lex_relop_or_assign(int first);
+static TokenType lex_symbol(int first);
+static TokenType lex_operator(int first);
+
+static TokenType yylex(void) {
+    int c;
+
+    /* 1) Saltar espacios y nuevas líneas */
+    do {
+        c = next_char();
+    } while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+
+    if (c == EOF)
+        return TOK_EOF;
+
+    if (isalpha(c))
+        return lex_identifier_or_keyword(c);
+
+    if (isdigit(c))
+        return lex_number(c);
+
+    if (c == '"')
+        return lex_string();
+
+    if (c == '=' || c == '!' || c == '<' || c == '>')
+        return lex_relop_or_assign(c);
+
+    if (c == ',' || c == ';' || c == '(' || c == ')' || c == '{' || c == '}')
+        return lex_symbol(c);
+
+    if (c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '^')
+        return lex_operator(c);
+
+    /* Cualquier otro carácter → TOK_UNKNOWN */
+    char buf[2];
+    buf[0] = (char)c;
+    buf[1] = '\0';
+    add_token(TOK_UNKNOWN, buf);
+    return TOK_UNKNOWN;
+}
+
+/* === Implementación de cada componente léxico === */
+
+static TokenType lex_identifier_or_keyword(int first) {
+    char buffer[MAX_LEXEME_LEN];
+    int len = 0;
+    int c = first;
+    do {
+        if (len < MAX_LEXEME_LEN - 1)
+            buffer[len++] = (char)c;
+        c = next_char();
+    } while (isalpha(c) || isdigit(c));
+    buffer[len] = '\0';
+    unget_char(c);
+
+    char tmp[MAX_LEXEME_LEN];
+    for (int i = 0; i < len; i++)
+        tmp[i] = (char)tolower((unsigned char)buffer[i]);
+    tmp[len] = '\0';
+
+    if (strcmp(tmp, "entero") == 0) {
+        add_token(TOK_INT, buffer);
+        return TOK_INT;
+    }
+    if (strcmp(tmp, "caracter") == 0) {
+        add_token(TOK_CHAR, buffer);
+        return TOK_CHAR;
+    }
+    if (strcmp(tmp, "flotante") == 0) {
+        add_token(TOK_FLOAT, buffer);
+        return TOK_FLOAT;
+    }
+    if (strcmp(tmp, "imprimir") == 0) {
+        add_token(TOK_PRINT, buffer);
+        return TOK_PRINT;
+    }
+    if (strcmp(tmp, "leer") == 0) {
+        add_token(TOK_READ, buffer);
+        return TOK_READ;
+    }
+    if (strcmp(tmp, "si") == 0) {
+        add_token(TOK_IF, buffer);
+        return TOK_IF;
+    }
+    if (strcmp(tmp, "sino") == 0) {
+        add_token(TOK_ELSE, buffer);
+        return TOK_ELSE;
+    }
+    if (strcmp(tmp, "mientras") == 0) {
+        add_token(TOK_WHILE, buffer);
+        return TOK_WHILE;
+    }
+    if (strcmp(tmp, "var") == 0) {
+        add_token(TOK_VAR, buffer);
+        return TOK_VAR;
+    }
+    if (strcmp(tmp, "const") == 0) {
+        add_token(TOK_CONST, buffer);
+        return TOK_CONST;
+    }
+    if (strcmp(tmp, "items") == 0) {
+        add_token(TOK_ITEMS, buffer);
+        return TOK_ITEMS;
+    }
+    if (strcmp(tmp, "item") == 0) {
+        add_token(TOK_ITEM, buffer);
+        return TOK_ITEM;
+    }
+
+    add_token(TOK_IDENT, buffer);
+    return TOK_IDENT;
+}
+
+static TokenType lex_number(int first) {
+    char buffer[MAX_LEXEME_LEN];
+    int len = 0;
+    int c = first;
+    do {
+        if (len < MAX_LEXEME_LEN - 1)
+            buffer[len++] = (char)c;
+        c = next_char();
+    } while (isdigit(c));
+    buffer[len] = '\0';
+    unget_char(c);
+    add_token(TOK_NUM, buffer);
+    return TOK_NUM;
+}
+
+static TokenType lex_string(void) {
+    char buffer[MAX_LEXEME_LEN];
+    int len = 0;
+    int c;
+    while ((c = next_char()) != '"' && c != EOF) {
+        if (len < MAX_LEXEME_LEN - 1)
+            buffer[len++] = (char)c;
+    }
+    buffer[len] = '\0';
+    if (c != '"') {
+        add_token(TOK_UNKNOWN, buffer);
+        return TOK_UNKNOWN;
+    }
+    add_token(TOK_STRING, buffer);
+    return TOK_STRING;
+}
+
+static TokenType lex_relop_or_assign(int first) {
+    int next = next_char();
+    if (first == '=') {
+        if (next == '=') {
+            add_token(TOK_EQ, "==");
+            return TOK_EQ;
+        }
+        unget_char(next);
+        add_token(TOK_ASSIGN, "=");
+        return TOK_ASSIGN;
+    }
+    if (first == '!') {
+        if (next == '=') {
+            add_token(TOK_NEQ, "!=");
+            return TOK_NEQ;
+        }
+        unget_char(next);
+        add_token(TOK_UNKNOWN, "!");
+        return TOK_UNKNOWN;
+    }
+    if (first == '<') {
+        if (next == '=') {
+            add_token(TOK_LE, "<=");
+            return TOK_LE;
+        }
+        unget_char(next);
+        add_token(TOK_LT, "<");
+        return TOK_LT;
+    }
+    if (first == '>') {
+        if (next == '=') {
+            add_token(TOK_GE, ">=");
+            return TOK_GE;
+        }
+        unget_char(next);
+        add_token(TOK_GT, ">");
+        return TOK_GT;
+    }
+    unget_char(next);
+    char buf[2] = { (char)first, '\0' };
+    add_token(TOK_UNKNOWN, buf);
+    return TOK_UNKNOWN;
+}
+
+static TokenType lex_symbol(int first) {
+    switch (first) {
+        case ',': add_token(TOK_COMMA, ","); return TOK_COMMA;
+        case ';': add_token(TOK_SEMI, ";"); return TOK_SEMI;
+        case '(': add_token(TOK_LPAREN, "("); return TOK_LPAREN;
+        case ')': add_token(TOK_RPAREN, ")"); return TOK_RPAREN;
+        case '{': add_token(TOK_LBRACE, "{"); return TOK_LBRACE;
+        case '}': add_token(TOK_RBRACE, "}"); return TOK_RBRACE;
+    }
+    char buf[2] = { (char)first, '\0' };
+    add_token(TOK_UNKNOWN, buf);
+    return TOK_UNKNOWN;
+}
+
+static TokenType lex_operator(int first) {
+    switch (first) {
+        case '+': add_token(TOK_PLUS, "+"); return TOK_PLUS;
+        case '-': add_token(TOK_MINUS, "-"); return TOK_MINUS;
+        case '*': add_token(TOK_MULT, "*"); return TOK_MULT;
+        case '/': add_token(TOK_DIV, "/"); return TOK_DIV;
+        case '%': add_token(TOK_MOD, "%"); return TOK_MOD;
+        case '^': add_token(TOK_POW, "^"); return TOK_POW;
+    }
+    char buf[2] = { (char)first, '\0' };
+    add_token(TOK_UNKNOWN, buf);
+    return TOK_UNKNOWN;
+}
  
  /**
   * tokenize_input():
@@ -515,20 +632,18 @@
   *   Si lookahead()==expected, avanza cur_token++ (consume el token).
   *   Si no coincide, imprime un mensaje de error y termina con exit(1).
   */
- static void match(TokenType expected) {
-     if (lookahead() == expected) {
-         cur_token++;
-     } else {
-         fprintf(stderr,
-                 "Error de sintaxis: se esperaba token %d ('%s'), "
-                 "pero vino token %d ('%s').\n",
-                 expected,
-                 tokens[cur_token].lexeme,
-                 lookahead(),
-                 tokens[cur_token].lexeme);
-         exit(1);
-     }
- }
+static void match(TokenType expected) {
+    if (lookahead() == expected) {
+        cur_token++;
+    } else {
+        fprintf(stderr,
+                "Error de sintaxis: se esperaba %s, pero vino %s ('%s').\n",
+                token_name(expected),
+                token_name(lookahead()),
+                tokens[cur_token].lexeme);
+        exit(1);
+    }
+}
  
  /**
   * expect_ident():
@@ -562,7 +677,8 @@
  static int parse_expr(void);
  static int parse_rel_expr(void);
  static int parse_add_expr(void);
- static int parse_mul_expr(void);
+static int parse_mul_expr(void);
+static int parse_pow_expr(void);
  static int parse_unary_expr(void);
  static int parse_primary(void);
  
@@ -628,29 +744,47 @@
  /*
   * <mul_expr> ::= <unary_expr> { ( '*' | '/' ) <unary_expr> }
   */
- static int parse_mul_expr(void) {
-     int left = parse_unary_expr();
- 
-     while (1) {
-         TokenType t = lookahead();
-         if (t == TOK_MULT || t == TOK_DIV) {
-             cur_token++;
-             int right = parse_unary_expr();
-             if (t == TOK_MULT) {
-                 left = left * right;
-             } else {
-                 if (right == 0) {
-                     fprintf(stderr, "Error: división por cero.\n");
-                     exit(1);
-                 }
-                 left = left / right;
-             }
-         } else {
-             break;
-         }
-     }
-     return left;
- }
+static int parse_pow_expr(void) {
+    int left = parse_unary_expr();
+
+    while (lookahead() == TOK_POW) {
+        match(TOK_POW);
+        int right = parse_unary_expr();
+        left = (int)pow(left, right);
+    }
+
+    return left;
+}
+
+static int parse_mul_expr(void) {
+    int left = parse_pow_expr();
+
+    while (1) {
+        TokenType t = lookahead();
+        if (t == TOK_MULT || t == TOK_DIV || t == TOK_MOD) {
+            cur_token++;
+            int right = parse_pow_expr();
+            if (t == TOK_MULT) {
+                left = left * right;
+            } else if (t == TOK_DIV) {
+                if (right == 0) {
+                    fprintf(stderr, "Error: división por cero.\n");
+                    exit(1);
+                }
+                left = left / right;
+            } else {
+                if (right == 0) {
+                    fprintf(stderr, "Error: módulo por cero.\n");
+                    exit(1);
+                }
+                left = left % right;
+            }
+        } else {
+            break;
+        }
+    }
+    return left;
+}
  
  /*
   * <unary_expr> ::= [ '-' ] <primary>
@@ -714,15 +848,16 @@
  static void parse_decl_stmt(void) {
      // 1) <type>
      TokenType t = lookahead();
-     if (t == TOK_INT || t == TOK_CHAR || t == TOK_FLOAT) {
-         cur_token++;
-     } else {
-         fprintf(stderr,
-                 "Error de sintaxis en <decl_stmt>: se esperaba tipo 'Entero', 'Caracter' o 'Flotante', "
-                 "pero vino '%s'.\n",
-                 tokens[cur_token].lexeme);
-         exit(1);
-     }
+    if (t == TOK_INT || t == TOK_CHAR || t == TOK_FLOAT ||
+        t == TOK_VAR || t == TOK_CONST || t == TOK_ITEMS || t == TOK_ITEM) {
+        cur_token++;
+    } else {
+        fprintf(stderr,
+                "Error de sintaxis en <decl_stmt>: se esperaba tipo 'Entero', 'Caracter', 'Flotante', 'var', 'const', 'items' o 'item', "
+                "pero vino '%s'.\n",
+                tokens[cur_token].lexeme);
+        exit(1);
+    }
  
      // 2) <var_list> ::= <var_decl> (',' <var_decl> )*
      while (1) {
@@ -827,14 +962,38 @@
   * <print_stmt> ::= 'Imprimir' '(' <expr> ')' ';'
   * Semántica: evalúa <expr> y muestra su valor por stdout (seguido de newline).
   */
- static void parse_print_stmt(void) {
-     match(TOK_PRINT);
-     match(TOK_LPAREN);
-     int val = parse_expr();
-     match(TOK_RPAREN);
-     match(TOK_SEMI);
-     printf("%d\n", val);
- }
+static void parse_print_stmt(void) {
+    match(TOK_PRINT);
+    if (lookahead() == TOK_LPAREN) {
+        match(TOK_LPAREN);
+        if (lookahead() == TOK_STRING) {
+            char *texto = tokens[cur_token].lexeme;
+            match(TOK_STRING);
+            match(TOK_RPAREN);
+            match(TOK_SEMI);
+            printf("%s\n", texto);
+        } else {
+            int val = parse_expr();
+            match(TOK_RPAREN);
+            match(TOK_SEMI);
+            printf("%d\n", val);
+        }
+    } else if (lookahead() == TOK_LBRACE) {
+        match(TOK_LBRACE);
+        if (lookahead() != TOK_STRING) {
+            fprintf(stderr, "Error de sintaxis: se esperaba CADENA.\n");
+            exit(1);
+        }
+        char *texto = tokens[cur_token].lexeme;
+        match(TOK_STRING);
+        match(TOK_RBRACE);
+        match(TOK_SEMI);
+        printf("%s\n", texto);
+    } else {
+        fprintf(stderr, "Error de sintaxis en Imprimir.\n");
+        exit(1);
+    }
+}
  
  /*
   * <read_stmt> ::= 'Leer' '(' IDENT ')' ';'
@@ -1202,16 +1361,31 @@
   *                          MAIN
   *=============================================================*/
  
- int main(void) {
-     // 1) Tokenizar toda la entrada (en CMD, pulsa Ctrl+Z ⏎ para EOF)
-     tokenize_input();
+int main(int argc, char *argv[]) {
+    input_stream = stdin;
+    if (argc > 1) {
+        input_stream = fopen(argv[1], "r");
+        if (!input_stream) {
+            perror("fopen");
+            return 1;
+        }
+    }
+
+    // 1) Tokenizar toda la entrada (en CMD, pulsa Ctrl+Z ⏎ para EOF)
+    tokenize_input();
+
+    // Guardar los tokens en un archivo de componentes léxicos
+    write_tokens_to_obj("lexico.obj");
  
      // 2) Iniciar el parser
-     cur_token = 0;
-     parse_program();
- 
-     // 3) Si no hubo error, imprimimos OK
-     printf("OK\n");
-     return 0;
- }
+    cur_token = 0;
+    parse_program();
+
+    // 3) Si no hubo error, imprimimos OK
+    printf("OK\n");
+    if (input_stream != stdin) {
+        fclose(input_stream);
+    }
+    return 0;
+}
  
